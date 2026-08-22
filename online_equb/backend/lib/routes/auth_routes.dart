@@ -3,7 +3,6 @@ import 'package:shelf_router/shelf_router.dart';
 import '../firebase_service.dart';
 import '../config.dart';
 import '../helpers.dart';
-import '../models/admin_model.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Auth Routes  —  /api/v1/auth/*

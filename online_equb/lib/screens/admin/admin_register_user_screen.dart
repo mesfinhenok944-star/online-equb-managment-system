@@ -114,6 +114,9 @@ class _AdminRegisterUserScreenState extends State<AdminRegisterUserScreen> {
     };
 
     bool ok;
+    String? errorMsg;
+    String? successMsg;
+
     if (_isEdit) {
       // Check if uniqueId changed & is still unique
       final oldId = (widget.editData!['uniqueId'] ?? '').toString().trim();
@@ -136,9 +139,16 @@ class _AdminRegisterUserScreenState extends State<AdminRegisterUserScreen> {
       }
       ok = await RoleManagementService.updateUser(
           widget.editData!['userId'] ?? '', payload);
+      errorMsg = t('Failed to update user.', 'ተጠቃሚውን ማሻሻል አልተቻለም።');
+      successMsg = t('User updated successfully.', 'ተጠቃሚ ተሻሽሏል።');
     } else {
-      final id = await RoleManagementService.createUser(payload);
-      ok = id != null;
+      final res = await RoleManagementService.createUserResult(payload);
+      ok = res['success'] == true;
+      if (ok) {
+        successMsg = res['message'] ?? t('User assigned successfully.', 'ተጠቃሚ ተመዝግቧል።');
+      } else {
+        errorMsg = res['error'] ?? t('Failed to assign user.', 'ተጠቃሚውን መመዝገብ አልተቻለም።');
+      }
     }
 
     setState(() => _saving = false);
@@ -146,18 +156,13 @@ class _AdminRegisterUserScreenState extends State<AdminRegisterUserScreen> {
 
     if (ok) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(_isEdit
-            ? t('User updated successfully.', 'ተጠቃሚ ተሻሽሏል።')
-            : t('User assigned successfully.', 'ተጠቃሚ ተመዝግቧል።')),
+        content: Text(successMsg ?? t('User saved successfully.', 'ተጠቃሚ በተሳካ ሁኔታ ተስቀምጧል።')),
         backgroundColor: AppColors.success,
       ));
       Navigator.pop(context, true);
     } else {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(t(
-          'Failed: email or Unique ID already registered.',
-          'ኢሜይል ወይም ልዩ መታወቂያ ቀድሞ ተመዝግቧል።',
-        )),
+        content: Text(errorMsg ?? t('Failed to process request.', 'ጥያቄውን ማከናወን አልተቻለም።')),
         backgroundColor: AppColors.error,
       ));
     }

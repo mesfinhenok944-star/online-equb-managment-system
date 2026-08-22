@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'api_service.dart';
@@ -96,19 +97,21 @@ class RoleManagementService {
   // ──────────────────────────────── ADMINS ─────────────────────────────────
 
   /// Fetch all non-deleted admins, optionally filtered by level.
+  /// Fetch all non-deleted admins, optionally filtered by level.
   static Future<List<Map<String, dynamic>>> getAdmins(
       {String? level}) async {
     try {
-      Query<Map<String, dynamic>> q =
-          _db.collection('admins').where('status', isNotEqualTo: 'deleted');
+      final snap = await _db.collection('admins').get();
+      var docs = snap.docs
+          .where((d) => (d.data()['status'] ?? 'active') != 'deleted');
       if (level != null && level != 'all') {
-        q = q.where('level', isEqualTo: level);
+        docs = docs.where((d) => (d.data()['level'] ?? 'low') == level);
       }
-      final snap = await q.orderBy('createdAt', descending: true).get();
-      return snap.docs
-          .map((d) => <String, dynamic>{...d.data(), 'adminId': d.id})
+      return docs
+          .map((d) => <String, dynamic>{...d.data(), 'adminId': d.id, 'id': d.id})
           .toList();
-    } catch (_) {
+    } catch (e) {
+      debugPrint('[getAdmins error] $e');
       final list = await ApiService.superAdminGetAdmins(level: level);
       return list.map((item) => Map<String, dynamic>.from(item as Map)).toList();
     }
@@ -124,7 +127,7 @@ class RoleManagementService {
     try {
       final doc = await _db.collection('admins').doc(adminId).get();
       if (!doc.exists) return null;
-      return <String, dynamic>{...doc.data()!, 'adminId': doc.id};
+      return <String, dynamic>{...doc.data()!, 'adminId': doc.id, 'id': doc.id};
     } catch (_) {
       final res = await ApiService.superAdminGetAdmin(adminId);
       if (res.containsKey('error')) return null;
@@ -132,87 +135,198 @@ class RoleManagementService {
     }
   }
 
-  /// Create a new admin document.
-  static Future<String?> createAdmin(Map<String, dynamic> admin) async {
+  /// Create a new admin document (max 3 admins allowed per level).
+  /// If admin email already exists, updates & re-assigns admin to the specified level.
+  static Future<Map<String, dynamic>> createAdminResult(Map<String, dynamic> admin) async {
     final email = (admin['email'] ?? '').toString().trim().toLowerCase();
     final username = (admin['username'] ?? '').toString().trim().toLowerCase();
-    if (email.isEmpty) return null;
-
-    try {
-      final byEmail = await _db
-          .collection('admins')
-          .where('email', isEqualTo: email)
-          .where('status', isNotEqualTo: 'deleted')
-          .get();
-      if (byEmail.docs.isNotEmpty) return null;
-
-      if (username.isNotEmpty) {
-        final byUsername = await _db
-            .collection('admins')
-            .where('username', isEqualTo: username)
-            .where('status', isNotEqualTo: 'deleted')
-            .get();
-        if (byUsername.docs.isNotEmpty) return null;
-      }
-
-      final firstName = (admin['firstName'] ?? '').toString().trim();
-      final middleName = (admin['middleName'] ?? '').toString().trim();
-      final lastName = (admin['lastName'] ?? '').toString().trim();
-      final fullName =
-          '$firstName $middleName $lastName'.replaceAll(RegExp(r'\s+'), ' ').trim();
-
-      final payload = <String, dynamic>{
-        'firstName': firstName,
-        'middleName': middleName,
-        'lastName': lastName,
-        'fullName': fullName,
-        'email': email,
-        'username': username.isEmpty ? email.split('@').first : username,
-        'password': admin['password'] ?? '',
-        'phone': admin['phone'] ?? '',
-        'address': admin['address'] ?? '',
-        'level': admin['level'] ?? 'low',
-        'role': 'admin',
-        'status': 'active',
-        'createdAt': FieldValue.serverTimestamp(),
-        'updatedAt': FieldValue.serverTimestamp(),
-        'permissions': _defaultPermissions(admin['level'] ?? 'low'),
-      };
-
-      final ref = await _db.collection('admins').add(payload);
-      return ref.id;
-    } catch (_) {
-      final res = await ApiService.superAdminCreateAdmin(admin);
-      if (res.containsKey('error')) return null;
-      return (res['adminId'] ?? res['id'] ?? 'admin_created').toString();
+    final level = (admin['level'] ?? 'low').toString();
+    if (email.isEmpty) {
+      return {'success': false, 'error': 'Email address is required.'};
     }
+
+    // 1. Try Backend REST API first
+    try {
+      final apiRes = await ApiService.superAdminCreateAdmin(admin);
+      if (!apiRes.containsKey('error') && (apiRes['adminId'] != null || apiRes['id'] != null)) {
+        final id = (apiRes['adminId'] ?? apiRes['id']).toString();
+        return {'success': true, 'id': id, 'message': apiRes['message'] ?? 'Admin assigned successfully.'};
+      }
+      if (apiRes.containsKey('error') && !apiRes['error'].toString().contains('Cannot reach server')) {
+        return {'success': false, 'error': apiRes['error'].toString()};
+      }
+    } catch (_) {}
+
+    // 2. Firestore fallback
+    try {
+      final db = _maybeDb;
+      if (db != null) {
+        final firstName = (admin['firstName'] ?? '').toString().trim();
+        final middleName = (admin['middleName'] ?? '').toString().trim();
+        final lastName = (admin['lastName'] ?? '').toString().trim();
+        final fullName =
+            '$firstName $middleName $lastName'.replaceAll(RegExp(r'\s+'), ' ').trim();
+
+        // Check if admin with this email already exists
+        final byEmail = await db
+            .collection('admins')
+            .where('email', isEqualTo: email)
+            .get();
+        final activeEmail = byEmail.docs.where((d) => (d.data()['status'] ?? 'active') != 'deleted');
+
+        if (activeEmail.isNotEmpty) {
+          // Admin already exists — UPDATE & re-assign to level
+          final docId = activeEmail.first.id;
+          final payload = <String, dynamic>{
+            if (firstName.isNotEmpty) 'firstName': firstName,
+            if (middleName.isNotEmpty) 'middleName': middleName,
+            if (lastName.isNotEmpty) 'lastName': lastName,
+            'fullName': fullName.isEmpty ? (activeEmail.first.data()['fullName'] ?? email) : fullName,
+            'level': level,
+            'status': 'active',
+            'updatedAt': DateTime.now().toIso8601String(),
+            'permissions': _defaultPermissions(level),
+          };
+          if (admin['password'] != null && admin['password'].toString().isNotEmpty) {
+            payload['password'] = admin['password'];
+          }
+          if (admin['phone'] != null && admin['phone'].toString().isNotEmpty) {
+            payload['phone'] = admin['phone'];
+          }
+          await db.collection('admins').doc(docId).set(payload, SetOptions(merge: true));
+          return {'success': true, 'id': docId, 'message': 'Admin updated and assigned successfully.'};
+        }
+
+        // New Admin: Check max 3 active limit per level
+        final existingAdmins = await getAdmins(level: level);
+        final activeCount = existingAdmins.where((a) => (a['status'] ?? 'active') != 'deleted').length;
+        if (activeCount >= 3) {
+          return {'success': false, 'error': 'Maximum 3 active admins allowed for $level level.'};
+        }
+
+        final payload = <String, dynamic>{
+          'firstName': firstName,
+          'middleName': middleName,
+          'lastName': lastName,
+          'fullName': fullName.isEmpty ? username : fullName,
+          'email': email,
+          'username': username.isEmpty ? email.split('@').first : username,
+          'password': admin['password'] ?? 'admin123',
+          'phone': admin['phone'] ?? '',
+          'address': admin['address'] ?? '',
+          'level': level,
+          'role': 'admin',
+          'status': 'active',
+          'createdAt': DateTime.now().toIso8601String(),
+          'updatedAt': DateTime.now().toIso8601String(),
+          'permissions': _defaultPermissions(level),
+        };
+
+        final ref = await db.collection('admins').add(payload);
+        return {'success': true, 'id': ref.id, 'message': 'Admin assigned successfully.'};
+      }
+    } catch (e) {
+      debugPrint('[createAdminResult error] $e');
+      return {'success': false, 'error': 'Database error: $e'};
+    }
+
+    return {'success': false, 'error': 'Failed to connect to backend server or database.'};
   }
 
-  /// Update an existing admin doc.
+  static Future<String?> createAdmin(Map<String, dynamic> admin) async {
+    final res = await createAdminResult(admin);
+    if (res['success'] == true) {
+      return (res['id'] ?? 'admin_created').toString();
+    }
+    if (res['error']?.toString().contains('Limit reached') == true ||
+        res['error']?.toString().contains('Maximum 3') == true) {
+      return 'limit_reached';
+    }
+    return null;
+  }
+
+  /// Update or auto-create an admin doc in Firebase Firestore and backend.
   static Future<bool> updateAdmin(
       String adminId, Map<String, dynamic> updates) async {
     try {
+      final db = _maybeDb;
       final firstName = (updates['firstName'] ?? '').toString().trim();
       final middleName = (updates['middleName'] ?? '').toString().trim();
       final lastName = (updates['lastName'] ?? '').toString().trim();
-      final fullName =
-          '$firstName $middleName $lastName'.replaceAll(RegExp(r'\s+'), ' ').trim();
+      String fullName = (updates['fullName'] ?? '').toString().trim();
+      if (fullName.isEmpty && (firstName.isNotEmpty || lastName.isNotEmpty)) {
+        fullName =
+            '$firstName $middleName $lastName'.replaceAll(RegExp(r'\s+'), ' ').trim();
+      }
 
       final payload = <String, dynamic>{
         ...updates,
-        'fullName': fullName,
+        if (fullName.isNotEmpty) 'fullName': fullName,
         'updatedAt': FieldValue.serverTimestamp(),
       };
       payload.remove('adminId');
       payload.remove('createdAt');
-      payload.remove('role');
 
-      await _db.collection('admins').doc(adminId).update(payload);
-      return true;
-    } catch (_) {
-      final res = await ApiService.superAdminUpdateAdmin(adminId, updates);
-      return !res.containsKey('error');
+      if (db != null) {
+        final targetDocId = adminId.trim();
+
+        // 1. Try finding doc by adminId if provided
+        if (targetDocId.isNotEmpty) {
+          final docSnap = await db.collection('admins').doc(targetDocId).get();
+          if (docSnap.exists) {
+            await db.collection('admins').doc(targetDocId).set(payload, SetOptions(merge: true));
+            return true;
+          }
+        }
+
+        // 2. Lookup by email
+        final email = (updates['email'] ?? '').toString().toLowerCase().trim();
+        if (email.isNotEmpty) {
+          final byEmail =
+              await db.collection('admins').where('email', isEqualTo: email).limit(1).get();
+          if (byEmail.docs.isNotEmpty) {
+            await db.collection('admins').doc(byEmail.docs.first.id).set(payload, SetOptions(merge: true));
+            return true;
+          }
+        }
+
+        // 3. Lookup by username
+        final username = (updates['username'] ?? '').toString().toLowerCase().trim();
+        if (username.isNotEmpty) {
+          final byUsername =
+              await db.collection('admins').where('username', isEqualTo: username).limit(1).get();
+          if (byUsername.docs.isNotEmpty) {
+            await db.collection('admins').doc(byUsername.docs.first.id).set(payload, SetOptions(merge: true));
+            return true;
+          }
+        }
+
+        // 4. Auto-create admin document if missing in Firestore console
+        final newDocId = targetDocId.isNotEmpty
+            ? targetDocId
+            : (username.isNotEmpty
+                ? username
+                : 'admin_${DateTime.now().millisecondsSinceEpoch}');
+        await db.collection('admins').doc(newDocId).set({
+          'createdAt': FieldValue.serverTimestamp(),
+          'status': 'active',
+          'role': 'admin',
+          ...payload,
+        }, SetOptions(merge: true));
+        return true;
+      }
+    } catch (e) {
+      debugPrint('[RoleManagementService.updateAdmin error] $e');
     }
+
+    // Backend API fallback
+    try {
+      final res = await ApiService.updateAdminSettings(adminId, updates);
+      if (!res.containsKey('error')) return true;
+    } catch (_) {}
+
+    final resApi = await ApiService.superAdminUpdateAdmin(adminId, updates);
+    return !resApi.containsKey('error');
   }
 
   /// Soft-delete an admin (status = deleted).
@@ -277,17 +391,26 @@ class RoleManagementService {
   /// Fetch all non-deleted users for a given equb level.
   static Future<List<Map<String, dynamic>>> getUsersByLevel(
       String level) async {
+    final lvlLower = level.toLowerCase();
     try {
-      final snap = await _db
-          .collection('users')
-          .where('equbLevel', isEqualTo: level)
-          .where('status', isNotEqualTo: 'deleted')
-          .orderBy('createdAt', descending: true)
-          .get();
-      return snap.docs
-          .map((d) => <String, dynamic>{...d.data(), 'userId': d.id})
+      final snap = await _db.collection('users').get();
+      final users = snap.docs
+          .where((d) {
+            final data = d.data();
+            final uLvl = (data['equbLevel'] ?? data['level'] ?? '').toString().toLowerCase();
+            final status = (data['status'] ?? 'active').toString();
+            return uLvl == lvlLower && status != 'deleted';
+          })
+          .map((d) => <String, dynamic>{...d.data(), 'userId': d.id, 'id': d.id})
           .toList();
-    } catch (_) {
+
+      if (users.isNotEmpty) return users;
+
+      // Fallback to API if empty
+      final list = await ApiService.adminGetUsers(level: level);
+      return list.map((item) => Map<String, dynamic>.from(item as Map)).toList();
+    } catch (e) {
+      debugPrint('[getUsersByLevel error] $e');
       final list = await ApiService.adminGetUsers(level: level);
       return list.map((item) => Map<String, dynamic>.from(item as Map)).toList();
     }
@@ -296,74 +419,189 @@ class RoleManagementService {
   /// Check uniqueId uniqueness (one-to-one mapping).
   static Future<bool> isUniqueIdTaken(String uniqueId,
       {String? excludeUserId}) async {
+    if (uniqueId.trim().isEmpty) return false;
     try {
       final snap = await _db
           .collection('users')
           .where('uniqueId', isEqualTo: uniqueId.trim())
-          .where('status', isNotEqualTo: 'deleted')
           .get();
-      if (snap.docs.isEmpty) return false;
+      final activeDocs = snap.docs
+          .where((d) => (d.data()['status'] ?? 'active') != 'deleted');
+      if (activeDocs.isEmpty) return false;
       if (excludeUserId != null) {
-        return snap.docs.any((d) => d.id != excludeUserId);
+        return activeDocs.any((d) => d.id != excludeUserId);
       }
       return true;
-    } catch (_) {
+    } catch (e) {
+      debugPrint('[isUniqueIdTaken error] $e');
       return false;
     }
   }
 
-  /// Create a new user (equb member) under an admin / level.
-  static Future<String?> createUser(Map<String, dynamic> user) async {
-    final email = (user['email'] ?? '').toString().trim().toLowerCase();
-    final uniqueId = (user['uniqueId'] ?? '').toString().trim();
+  /// Find a non-deleted user (equb member) by email, uniqueId, phone, or name.
+  static Future<Map<String, dynamic>?> findUser(String input) async {
+    final search = input.trim().toLowerCase();
+    if (search.isEmpty) return null;
 
     try {
-      if (email.isNotEmpty) {
-        final byEmail = await _db
+      final db = _maybeDb;
+      if (db != null) {
+        var q = await db
+            .collection('users')
+            .where('email', isEqualTo: search)
+            .limit(1)
+            .get();
+        if (q.docs.isNotEmpty && (q.docs.first.data()['status'] ?? 'active') != 'deleted') {
+          return {'userId': q.docs.first.id, 'id': q.docs.first.id, ...q.docs.first.data()};
+        }
+
+        q = await db
+            .collection('users')
+            .where('uniqueId', isEqualTo: input.trim())
+            .limit(1)
+            .get();
+        if (q.docs.isNotEmpty && (q.docs.first.data()['status'] ?? 'active') != 'deleted') {
+          return {'userId': q.docs.first.id, 'id': q.docs.first.id, ...q.docs.first.data()};
+        }
+
+        final all = await db.collection('users').get();
+        for (final doc in all.docs) {
+          final data = doc.data();
+          if (data['status'] == 'deleted') continue;
+          final uEmail = (data['email'] ?? '').toString().toLowerCase();
+          final uUnique = (data['uniqueId'] ?? '').toString().toLowerCase();
+          final uPhone = (data['phoneNumber'] ?? '').toString().toLowerCase();
+          final uName = (data['fullName'] ?? '').toString().toLowerCase();
+          final uFirst = (data['firstName'] ?? '').toString().toLowerCase();
+
+          if (uEmail == search ||
+              uUnique == search ||
+              uPhone == search ||
+              uName == search ||
+              uFirst == search) {
+            return {'userId': doc.id, 'id': doc.id, ...data};
+          }
+        }
+      }
+    } catch (_) {}
+
+    return null;
+  }
+
+  /// Create a new user (equb member) under an admin / level.
+  /// Automatically updates existing user doc if email already exists (Upsert).
+  static Future<Map<String, dynamic>> createUserResult(Map<String, dynamic> user) async {
+    final email = (user['email'] ?? '').toString().trim().toLowerCase();
+    String uniqueId = (user['uniqueId'] ?? '').toString().trim();
+    if (uniqueId.isEmpty) {
+      uniqueId = 'EQ-${DateTime.now().millisecondsSinceEpoch.toString().substring(6)}';
+    }
+
+    if (email.isEmpty) {
+      return {'success': false, 'error': 'Email address is required.'};
+    }
+
+    // 1. Try Backend REST API first
+    try {
+      final apiRes = await ApiService.adminCreateUser(user);
+      if (!apiRes.containsKey('error') && (apiRes['userId'] != null || apiRes['id'] != null)) {
+        final id = (apiRes['userId'] ?? apiRes['id']).toString();
+        return {'success': true, 'id': id, 'message': apiRes['message'] ?? 'User assigned successfully.'};
+      }
+      if (apiRes.containsKey('error') && !apiRes['error'].toString().contains('Cannot reach server')) {
+        return {'success': false, 'error': apiRes['error'].toString()};
+      }
+    } catch (_) {}
+
+    // 2. Firestore direct SDK fallback
+    try {
+      final db = _maybeDb;
+      if (db != null) {
+        final firstName = (user['firstName'] ?? '').toString().trim();
+        final middleName = (user['middleName'] ?? '').toString().trim();
+        final lastName = (user['lastName'] ?? '').toString().trim();
+        final fullName =
+            '$firstName $middleName $lastName'.replaceAll(RegExp(r'\s+'), ' ').trim();
+
+        // Check if user with email already exists
+        final byEmail = await db
             .collection('users')
             .where('email', isEqualTo: email)
-            .where('status', isNotEqualTo: 'deleted')
             .get();
-        if (byEmail.docs.isNotEmpty) return null;
-      }
+        final activeEmailDocs = byEmail.docs
+            .where((d) => (d.data()['status'] ?? 'active') != 'deleted');
 
-      if (uniqueId.isNotEmpty) {
+        if (activeEmailDocs.isNotEmpty) {
+          // User already exists — UPDATE & re-assign to level
+          final docId = activeEmailDocs.first.id;
+          final existingData = activeEmailDocs.first.data();
+
+          if (uniqueId.isNotEmpty && uniqueId != (existingData['uniqueId'] ?? '')) {
+            final taken = await isUniqueIdTaken(uniqueId, excludeUserId: docId);
+            if (taken) {
+              return {'success': false, 'error': 'Unique ID "$uniqueId" is already registered to another active member.'};
+            }
+          }
+
+          final payload = <String, dynamic>{
+            'firstName': firstName,
+            'middleName': middleName,
+            'lastName': lastName,
+            'fullName': fullName.isEmpty ? email : fullName,
+            'email': email,
+            'phoneNumber': user['phoneNumber'] ?? '',
+            'uniqueId': uniqueId,
+            'equbLevel': user['equbLevel'] ?? 'low',
+            'adminId': user['adminId'] ?? '',
+            'status': 'active',
+            'updatedAt': DateTime.now().toIso8601String(),
+          };
+          await db.collection('users').doc(docId).set(payload, SetOptions(merge: true));
+          return {'success': true, 'id': docId, 'message': 'User updated and assigned to level.'};
+        }
+
+        // New User: Unique ID check
         final taken = await isUniqueIdTaken(uniqueId);
-        if (taken) return null;
+        if (taken) {
+          return {'success': false, 'error': 'Unique ID "$uniqueId" is already registered to another active member.'};
+        }
+
+        final payload = <String, dynamic>{
+          'firstName': firstName,
+          'middleName': middleName,
+          'lastName': lastName,
+          'fullName': fullName.isEmpty ? 'Equb Member' : fullName,
+          'email': email,
+          'phoneNumber': user['phoneNumber'] ?? '',
+          'uniqueId': uniqueId,
+          'equbLevel': user['equbLevel'] ?? 'low',
+          'adminId': user['adminId'] ?? '',
+          'role': 'user',
+          'status': 'active',
+          'hasWon': false,
+          'participationHistory': [],
+          'balance': 0,
+          'createdAt': DateTime.now().toIso8601String(),
+          'updatedAt': DateTime.now().toIso8601String(),
+        };
+
+        final ref = await db.collection('users').add(payload);
+        return {'success': true, 'id': ref.id, 'message': 'User registered successfully.'};
       }
-
-      final firstName = (user['firstName'] ?? '').toString().trim();
-      final middleName = (user['middleName'] ?? '').toString().trim();
-      final lastName = (user['lastName'] ?? '').toString().trim();
-      final fullName =
-          '$firstName $middleName $lastName'.replaceAll(RegExp(r'\s+'), ' ').trim();
-
-      final payload = <String, dynamic>{
-        'firstName': firstName,
-        'middleName': middleName,
-        'lastName': lastName,
-        'fullName': fullName,
-        'email': email,
-        'phoneNumber': user['phoneNumber'] ?? '',
-        'uniqueId': uniqueId,
-        'equbLevel': user['equbLevel'] ?? 'low',
-        'adminId': user['adminId'] ?? '',
-        'role': 'user',
-        'status': 'active',
-        'hasWon': false,
-        'participationHistory': [],
-        'balance': 0,
-        'createdAt': FieldValue.serverTimestamp(),
-        'updatedAt': FieldValue.serverTimestamp(),
-      };
-
-      final ref = await _db.collection('users').add(payload);
-      return ref.id;
-    } catch (_) {
-      final res = await ApiService.adminCreateUser(user);
-      if (res.containsKey('error')) return null;
-      return (res['userId'] ?? res['id'] ?? 'user_created').toString();
+    } catch (e) {
+      debugPrint('[createUserResult error] $e');
+      return {'success': false, 'error': 'Database error: $e'};
     }
+
+    return {'success': false, 'error': 'Failed to connect to backend server or database.'};
+  }
+
+  static Future<String?> createUser(Map<String, dynamic> user) async {
+    final res = await createUserResult(user);
+    if (res['success'] == true) {
+      return (res['id'] ?? 'user_created').toString();
+    }
+    return null;
   }
 
   /// Update an existing user doc.
@@ -476,22 +714,84 @@ class RoleManagementService {
     }
   }
 
-  /// Get draw history for a level.
+  /// Get draw history strictly isolated for a given level with deduplication.
   static Future<List<Map<String, dynamic>>> getDrawHistory(
       String level) async {
+    final targetLevel = level.toLowerCase().replaceAll('equb_', '').trim();
+    final List<Map<String, dynamic>> rawList = [];
+    final Set<String> seenKeys = {};
+
     try {
-      final snap = await _db
-          .collection('draws')
-          .where('equbLevel', isEqualTo: level)
-          .orderBy('createdAt', descending: true)
-          .get();
-      return snap.docs
-          .map((d) => <String, dynamic>{...d.data(), 'drawId': d.id})
-          .toList();
-    } catch (_) {
-      final list = await ApiService.adminGetDrawHistory(level);
-      return list.map((item) => Map<String, dynamic>.from(item as Map)).toList();
+      final snap = await _db.collection('draws').get();
+      for (final doc in snap.docs) {
+        final data = doc.data();
+        final docLevel = (data['equbLevel'] ?? data['level'] ?? '').toString().toLowerCase().replaceAll('equb_', '').trim();
+        if (docLevel == targetLevel) {
+          rawList.add({...data, 'drawId': doc.id});
+        }
+      }
+    } catch (e) {
+      debugPrint('[getDrawHistory error] $e');
     }
+
+    if (rawList.isEmpty) {
+      // Fallback 1: ApiService backend API
+      try {
+        final list = await ApiService.adminGetDrawHistory(targetLevel);
+        for (final item in list) {
+          final m = Map<String, dynamic>.from(item as Map);
+          final docLevel = (m['equbLevel'] ?? m['level'] ?? targetLevel).toString().toLowerCase().replaceAll('equb_', '').trim();
+          if (docLevel == targetLevel) {
+            rawList.add(m);
+          }
+        }
+      } catch (_) {}
+    }
+
+    if (rawList.isEmpty) {
+      // Fallback 2: Retrieve winners directly from users belonging strictly to this level
+      try {
+        final usersSnap = await _db.collection('users').get();
+        int drawCounter = 1;
+        for (final doc in usersSnap.docs) {
+          final u = doc.data();
+          final uLevel = (u['equbLevel'] ?? u['assignedLevel'] ?? '').toString().toLowerCase().replaceAll('equb_', '').trim();
+          final isWinner = u['hasWon'] == true || u['status'] == 'winner';
+          if (uLevel == targetLevel && isWinner) {
+            rawList.add({
+              'drawId': 'user_win_${doc.id}',
+              'equbLevel': targetLevel,
+              'winnerId': doc.id,
+              'winnerName': u['fullName'] ?? u['firstName'] ?? 'Winner Participant',
+              'winnerUniqueId': u['uniqueId'] ?? u['userId'] ?? doc.id,
+              'drawNumber': drawCounter++,
+              'createdAt': u['lastWinDate'] ?? u['updatedAt'] ?? u['createdAt'] ?? DateTime.now().toIso8601String(),
+              'status': 'completed',
+            });
+          }
+        }
+      } catch (_) {}
+    }
+
+    // Deduplicate and sort by createdAt descending
+    final List<Map<String, dynamic>> cleanList = [];
+    for (final item in rawList) {
+      final winnerId = (item['winnerUniqueId'] ?? item['winnerId'] ?? item['drawId'] ?? '').toString();
+      final drawNum = item['drawNumber'] ?? 1;
+      final key = '${winnerId}_$drawNum';
+      if (!seenKeys.contains(key)) {
+        seenKeys.add(key);
+        cleanList.add(item);
+      }
+    }
+
+    cleanList.sort((a, b) {
+      final aTime = a['createdAt']?.toString() ?? '';
+      final bTime = b['createdAt']?.toString() ?? '';
+      return bTime.compareTo(aTime);
+    });
+
+    return cleanList;
   }
 
   // ──────────────────────────────── HELPERS ────────────────────────────────
@@ -524,23 +824,18 @@ class RoleManagementService {
       final byEmail = await _db
           .collection('admins')
           .where('email', isEqualTo: input)
-          .where('status', isEqualTo: 'active')
           .limit(1)
           .get();
-      if (byEmail.docs.isNotEmpty) {
+      if (byEmail.docs.isNotEmpty && (byEmail.docs.first.data()['status'] ?? 'active') != 'deleted') {
         return {...byEmail.docs.first.data(), 'adminId': byEmail.docs.first.id};
       }
       final byUsername = await _db
           .collection('admins')
           .where('username', isEqualTo: input)
-          .where('status', isEqualTo: 'active')
           .limit(1)
           .get();
-      if (byUsername.docs.isNotEmpty) {
-        return {
-          ...byUsername.docs.first.data(),
-          'adminId': byUsername.docs.first.id
-        };
+      if (byUsername.docs.isNotEmpty && (byUsername.docs.first.data()['status'] ?? 'active') != 'deleted') {
+        return {...byUsername.docs.first.data(), 'adminId': byUsername.docs.first.id};
       }
     } catch (_) {}
     return null;

@@ -393,6 +393,7 @@ Future<Map<String, dynamic>> _buildLevelStats(String level) async {
     'adminFee': defaults.adminFee,
     'maxParticipants': defaults.maxParticipants,
     'currentParticipants': active.length,
+    'wonCount': winners.length,
     'eligibleCount': eligible.length,
     'drawsHeld': draws.length,
     'totalCollected': active.length * defaults.price,

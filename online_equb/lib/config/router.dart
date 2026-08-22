@@ -32,14 +32,7 @@ GoRouter appRouter(AuthProvider auth) => GoRouter(
         // If not logged in and trying to access a protected route, go to login
         if (!loggedIn && !isPublic) return '/login';
 
-        // The public home page is for members and visitors.  Privileged
-        // sessions always resume in their own protected workspace.
-        if (loggedIn && loc == '/home') {
-          if (auth.isSuperAdmin) return '/super-admin';
-          if (auth.isAdmin) return '/admin';
-        }
-
-        // If logged in and trying to access auth pages, send to appropriate home/dashboard
+        // If logged in and trying to access auth pages (/login or /register), send to appropriate home/dashboard
         if (loggedIn && onAuth) {
           if (auth.isSuperAdmin) return '/super-admin';
           if (auth.isAdmin) return '/admin';
@@ -53,7 +46,16 @@ GoRouter appRouter(AuthProvider auth) => GoRouter(
         GoRoute(path: '/register', builder: (_, __) => const RegisterScreen()),
 
         // ── regular user ──────────────────────────────────────────────────
-        GoRoute(path: '/home', builder: (_, __) => const HomeScreen()),
+        GoRoute(
+          path: '/home',
+          builder: (_, __) => const HomeScreen(),
+          redirect: (context, state) {
+            final a = context.read<AuthProvider>();
+            if (a.isSuperAdmin) return '/super-admin';
+            if (a.isAdmin) return '/admin';
+            return null;
+          },
+        ),
         GoRoute(path: '/equbs', builder: (_, __) => const EqubListScreen()),
         GoRoute(
           path: '/equbs/:id',
@@ -71,7 +73,17 @@ GoRouter appRouter(AuthProvider auth) => GoRouter(
             amount: double.tryParse(state.pathParameters['amount'] ?? '0') ?? 0,
           ),
         ),
-        GoRoute(path: '/profile', builder: (_, __) => const ProfileScreen()),
+        GoRoute(
+          path: '/profile',
+          builder: (_, __) => const ProfileScreen(),
+          redirect: (context, state) {
+            final a = context.read<AuthProvider>();
+            if (!a.isLoggedIn) return '/login';
+            if (a.isSuperAdmin) return '/super-admin';
+            if (a.isAdmin) return '/admin';
+            return null;
+          },
+        ),
 
         // ── admin ─────────────────────────────────────────────────────────
         GoRoute(

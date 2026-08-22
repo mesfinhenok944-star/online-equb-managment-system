@@ -24,14 +24,12 @@ router.get('/admins', async (req, res) => {
   try {
     const { level = 'all', status = 'all' } = req.query;
 
-    let query = db.collection('admins');
-    if (level !== 'all') query = query.where('level', '==', level);
-    if (status !== 'all') query = query.where('status', '==', status);
-
-    const snap = await query.orderBy('createdAt', 'desc').get();
-    const admins = snap.docs
-      .filter(d => d.data().status !== 'deleted')
-      .map(formatAdmin);
+    const snap = await db.collection('admins').get();
+    let docs = snap.docs.filter(d => d.data().status !== 'deleted');
+    if (level !== 'all') docs = docs.filter(d => (d.data().level || d.data().equbLevel) === level);
+    if (status !== 'all') docs = docs.filter(d => d.data().status === status);
+    docs.sort((a, b) => (b.data().createdAt || '').localeCompare(a.data().createdAt || ''));
+    const admins = docs.map(formatAdmin);
 
     return res.json(admins);
   } catch (err) {
@@ -57,24 +55,92 @@ router.post('/admins', async (req, res) => {
 
     const emailLower = email.toLowerCase().trim();
     const usernameFinal = (username || emailLower.split('@')[0]).toLowerCase().trim();
-
-    // Duplicate checks
-    const byEmail = await db.collection('admins')
-      .where('email', '==', emailLower)
-      .where('status', '!=', 'deleted').limit(1).get();
-    if (!byEmail.empty) return res.status(409).json({ error: 'Email already registered.' });
-
-    const byUsername = await db.collection('admins')
-      .where('username', '==', usernameFinal)
-      .where('status', '!=', 'deleted').limit(1).get();
-    if (!byUsername.empty) return res.status(409).json({ error: 'Username already taken.' });
-
     const fullName = `${firstName} ${middleName} ${lastName}`.replace(/\s+/g, ' ').trim();
     const now = nowIso();
 
+    // 1. Check if admin with email already exists
+    const byEmail = await db.collection('admins').where('email', '==', emailLower).get();
+    const activeEmailDocs = byEmail.docs.filter(d => d.data().status !== 'deleted');
+
+    if (activeEmailDocs.length > 0) {
+      // Existing admin — UPSERT (update & re-assign to level)
+      const doc = activeEmailDocs[0];
+      const existing = doc.data();
+
+      // Check username if changed
+      if (usernameFinal && usernameFinal !== existing.username) {
+        const byUser = await db.collection('admins').where('username', '==', usernameFinal).get();
+        const otherWithUsername = byUser.docs.find(d => d.id !== doc.id && d.data().status !== 'deleted');
+        if (otherWithUsername) {
+          return res.status(409).json({ error: `Username "${usernameFinal}" is already taken.` });
+        }
+      }
+
+      const updates = {
+        firstName: firstName || existing.firstName || '',
+        middleName: middleName || existing.middleName || '',
+        lastName: lastName || existing.lastName || '',
+        fullName: fullName || existing.fullName || emailLower,
+        username: usernameFinal || existing.username,
+        phone: phone || existing.phone || '',
+        address: address || existing.address || '',
+        level,
+        status: 'active',
+        contactInfo: { ...(existing.contactInfo || {}), ...contactInfo },
+        permissions: defaultPermissions(level),
+        updatedAt: now,
+      };
+      if (password) updates.password = password;
+
+      await doc.ref.update(updates);
+      const updated = await doc.ref.get();
+      return res.status(200).json({
+        adminId: doc.id, ...updated.data(),
+        message: 'Admin updated and assigned successfully.',
+      });
+    }
+
+    // 2. Check soft-deleted admin
+    const deletedEmailDocs = byEmail.docs.filter(d => d.data().status === 'deleted');
+    if (deletedEmailDocs.length > 0) {
+      const doc = deletedEmailDocs[0];
+      const updates = {
+        firstName, middleName, lastName, fullName: fullName || emailLower,
+        email: emailLower, username: usernameFinal,
+        password: password || 'admin123',
+        phone, address, level, role: 'admin', status: 'active',
+        contactInfo, permissions: defaultPermissions(level),
+        updatedAt: now,
+      };
+      await doc.ref.update(updates);
+      const updated = await doc.ref.get();
+      return res.status(200).json({
+        adminId: doc.id, ...updated.data(),
+        message: 'Admin restored and assigned successfully.',
+      });
+    }
+
+    // 3. Username check for new admin
+    if (usernameFinal) {
+      const byUsername = await db.collection('admins').where('username', '==', usernameFinal).get();
+      const activeUserDocs = byUsername.docs.filter(d => d.data().status !== 'deleted');
+      if (activeUserDocs.length > 0) {
+        return res.status(409).json({ error: `Username "${usernameFinal}" is already taken.` });
+      }
+    }
+
+    // 4. Max 3 active admins limit check per Equb level
+    const levelAdminsSnap = await db.collection('admins').where('level', '==', level).get();
+    const activeAdminsCount = levelAdminsSnap.docs.filter(d => d.data().status !== 'deleted').length;
+    if (activeAdminsCount >= 3) {
+      return res.status(422).json({ error: `Maximum 3 active admins allowed for ${level} level.` });
+    }
+
+    // 5. Create new admin doc
     const data = {
-      firstName, middleName, lastName, fullName,
-      email: emailLower, username: usernameFinal, password,
+      firstName, middleName, lastName, fullName: fullName || usernameFinal,
+      email: emailLower, username: usernameFinal,
+      password: password || 'admin123',
       phone, address, level,
       role: 'admin', status: 'active',
       contactInfo,
@@ -83,13 +149,12 @@ router.post('/admins', async (req, res) => {
     };
 
     const ref = await db.collection('admins').add(data);
-
     return res.status(201).json({
       adminId: ref.id, ...data,
       message: 'Admin assigned successfully.',
     });
   } catch (err) {
-    console.error('[superAdmin/createAdmin]', err);
+    console.error('[superAdmin/createAdmin error]', err);
     return res.status(500).json({ error: err.message });
   }
 });

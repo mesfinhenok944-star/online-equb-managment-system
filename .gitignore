@@ -1,0 +1,7 @@
+# Ignore Firebase service account key secrets
+serviceAccountKey.json
+**/serviceAccountKey.json
+*.pem
+*.key
+.env
+**/node_modules/

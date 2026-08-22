@@ -1,17 +1,23 @@
 import 'dart:convert';
+import 'dart:io' show Platform;
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
-import '../utils/constants.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ApiService
-// All calls go to the Node.js/Express backend on localhost:8080.
-// Firebase is used by the backend; the Flutter app only calls the REST API.
+// All calls go to the Node.js/Express backend on localhost:8080 / 10.0.2.2:8080.
+// Firebase is used by the backend; the Flutter app calls the REST API.
 // ─────────────────────────────────────────────────────────────────────────────
 
 class ApiService {
-  // Change to your server's IP when running on a physical device
-  static const _base = 'http://localhost:8080/api/v1';
+  static String get _base {
+    if (kIsWeb) return 'http://localhost:8080/api/v1';
+    try {
+      if (Platform.isAndroid) return 'http://10.0.2.2:8080/api/v1';
+    } catch (_) {}
+    return 'http://localhost:8080/api/v1';
+  }
 
   static final _client = http.Client();
 
@@ -230,6 +236,21 @@ class ApiService {
       return _decode(res);
     } catch (_) {
       return {};
+    }
+  }
+
+  /// Admin self-update profile settings.
+  static Future<Map<String, dynamic>> updateAdminSettings(
+      String adminId, Map<String, dynamic> data) async {
+    try {
+      final res = await _client.put(
+        Uri.parse('$_base/admin/settings'),
+        headers: await _headers(),
+        body: jsonEncode(data),
+      );
+      return _decode(res);
+    } catch (e) {
+      return {'error': '$e'};
     }
   }
 

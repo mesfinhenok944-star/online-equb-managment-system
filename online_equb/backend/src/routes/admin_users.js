@@ -33,47 +33,46 @@ router.post('/users/register', async (req, res) => {
     }
 
     // Check if national ID is already registered (one-to-one)
-    const existingNID = await db.collection('users')
-      .where('nationalId', '==', nationalId)
-      .where('status', '!=', 'deleted')
-      .limit(1)
-      .get();
+    const existingNIDSnap = await db.collection('users').where('nationalId', '==', nationalId).get();
+    const activeNID = existingNIDSnap.docs.filter(d => d.data().status !== 'deleted');
 
-    if (!existingNID.empty) {
+    if (activeNID.length > 0) {
       return res.status(409).json({
         error: 'National ID already registered (One-to-One mapping)'
       });
     }
 
     // Check if email exists
-    const existingEmail = await db.collection('users')
-      .where('email', '==', email.toLowerCase())
-      .where('status', '!=', 'deleted')
-      .limit(1)
-      .get();
+    const existingEmailSnap = await db.collection('users').where('email', '==', email.toLowerCase().trim()).get();
+    const activeEmail = existingEmailSnap.docs.filter(d => d.data().status !== 'deleted');
 
-    if (!existingEmail.empty) {
+    if (activeEmail.length > 0) {
       return res.status(409).json({
         error: 'Email already registered'
       });
     }
 
     // Create user
+    const fullName = `${firstName} ${middleName || ''} ${lastName}`.replace(/\s+/g, ' ').trim();
     const userData = {
       firstName,
       lastName,
       middleName: middleName || '',
-      email: email.toLowerCase(),
-      phoneNumber,
-      nationalId,
+      fullName,
+      email: email.toLowerCase().trim(),
+      phoneNumber: phoneNumber || '',
+      nationalId: nationalId || '',
+      uniqueId: nationalId || '',
       level: adminLevel,
-      adminId,
+      equbLevel: adminLevel,
+      adminId: adminId || '',
+      role: 'user',
       status: 'active',
       hasWon: false,
       balance: 0,
       participationHistory: [],
-      createdAt: now(),
-      updatedAt: now()
+      createdAt: nowIso(),
+      updatedAt: nowIso()
     };
 
     const userRef = await db.collection('users').add(userData);
@@ -100,17 +99,16 @@ router.get('/users', async (req, res) => {
     const adminLevel = req.user?.level || 'low';
     const { status = 'all' } = req.query;
 
-    let query = db.collection('users')
-      .where('level', '==', adminLevel);
-
+    const snapshot = await db.collection('users').get();
+    let docs = snapshot.docs.filter(d => (d.data().level === adminLevel || d.data().equbLevel === adminLevel));
     if (status !== 'all') {
-      query = query.where('status', '==', status);
+      docs = docs.filter(d => d.data().status === status);
     } else {
-      query = query.where('status', '!=', 'deleted');
+      docs = docs.filter(d => d.data().status !== 'deleted');
     }
+    docs.sort((a, b) => (b.data().createdAt || '').localeCompare(a.data().createdAt || ''));
 
-    const snapshot = await query.orderBy('createdAt', 'desc').get();
-    const users = snapshot.docs.map(doc => ({
+    const users = docs.map(doc => ({
       userId: doc.id,
       ...doc.data()
     }));
@@ -134,10 +132,11 @@ router.get('/users/search', async (req, res) => {
     const adminLevel = req.user?.level || 'low';
     const { q = '' } = req.query;
 
-    const snapshot = await db.collection('users')
-      .where('level', '==', adminLevel)
-      .where('status', '!=', 'deleted')
-      .get();
+    const snapshot = await db.collection('users').get();
+    const docs = snapshot.docs.filter(d =>
+      (d.data().level === adminLevel || d.data().equbLevel === adminLevel) &&
+      d.data().status !== 'deleted'
+    );
 
     const users = snapshot.docs
       .map(doc => ({ userId: doc.id, ...doc.data() }))

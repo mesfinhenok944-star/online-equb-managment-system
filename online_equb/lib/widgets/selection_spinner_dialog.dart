@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:math';
 import 'package:flutter/material.dart';
+import '../services/sound_service.dart';
 
 /// Shows a modal dialog that visually "spins" through the provided
 /// participants and stops at a randomly chosen one. Returns the selected
@@ -34,6 +35,7 @@ class _SelectionSpinner extends StatefulWidget {
 class _SelectionSpinnerState extends State<_SelectionSpinner> {
   int _current = 0;
   bool _running = true;
+  bool _finished = false;
 
   @override
   void initState() {
@@ -44,6 +46,7 @@ class _SelectionSpinnerState extends State<_SelectionSpinner> {
   @override
   void dispose() {
     _running = false;
+    SoundService.stop();
     super.dispose();
   }
 
@@ -53,6 +56,9 @@ class _SelectionSpinnerState extends State<_SelectionSpinner> {
     final target = rand.nextInt(n);
     final rotations = 4 + rand.nextInt(4); // 4..7 full cycles
     final totalSteps = rotations * n + target;
+
+    // Speak spinning audio in Amharic
+    SoundService.speakSpinningAnnouncement();
 
     // Delay from fast to slow (ms)
     const minDelay = 40;
@@ -65,6 +71,7 @@ class _SelectionSpinnerState extends State<_SelectionSpinner> {
 
       await Future.delayed(Duration(milliseconds: delayMs));
       if (!mounted) return;
+      SoundService.playClickSound();
       setState(() {
         _current = (step + 1) % n;
       });
@@ -73,12 +80,17 @@ class _SelectionSpinnerState extends State<_SelectionSpinner> {
     if (!mounted) return;
     // Ensure final index is the chosen target
     final finalIndex = target % n;
-    setState(() => _current = finalIndex);
+    setState(() {
+      _current = finalIndex;
+      _finished = true;
+    });
 
-    // Small pause before closing so user sees the result
-    await Future.delayed(const Duration(milliseconds: 600));
-    if (!mounted) return;
-    Navigator.of(context).pop(widget.participants[_current]);
+    final winner = widget.participants[_current];
+    final winnerName = (winner['fullName'] ?? winner['name'] ?? winner['firstName'] ?? '').toString();
+    final winnerId = (winner['uniqueId'] ?? winner['userId'] ?? winner['id'] ?? '').toString();
+
+    // Announce winner 3 times in Amharic
+    SoundService.speakWinnerRepeatedThreeTimes(fullName: winnerName, uniqueId: winnerId);
   }
 
   @override
@@ -88,8 +100,25 @@ class _SelectionSpinnerState extends State<_SelectionSpinner> {
         (current['fullName'] ?? current['name'] ?? 'Unnamed').toString();
 
     return AlertDialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
       backgroundColor: Colors.white,
-      title: const Text('Running Draw'),
+      title: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(
+            _finished ? '🎉 አሸናፊ (Winner)' : 'እጣ በመውጣት ላይ (Spinning...)',
+            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+          ),
+          IconButton(
+            icon: const Icon(Icons.close_rounded, color: Colors.grey),
+            onPressed: () {
+              SoundService.stop();
+              Navigator.of(context).pop(_finished ? widget.participants[_current] : null);
+            },
+            tooltip: 'ዝጋ (Close)',
+          ),
+        ],
+      ),
       content: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -100,16 +129,36 @@ class _SelectionSpinnerState extends State<_SelectionSpinner> {
                 style: const TextStyle(color: Colors.white, fontSize: 28)),
           ),
           const SizedBox(height: 12),
-          Text(display, style: const TextStyle(fontWeight: FontWeight.bold)),
+          Text(display, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+          const SizedBox(height: 4),
+          Text(
+            'ID: ${current['uniqueId'] ?? current['userId'] ?? '-'}',
+            style: const TextStyle(color: Colors.grey, fontSize: 12),
+          ),
           const SizedBox(height: 8),
-          const Text('Selecting a winner...',
-              style: TextStyle(color: Colors.black54)),
+          Text(
+            _finished ? 'አሸናፊው ተመርጧል!' : 'አሸናፊ በመምረጥ ላይ ነው...',
+            style: TextStyle(
+              color: _finished ? Colors.green : Colors.black54,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
         ],
       ),
       actions: [
-        TextButton(
-            onPressed: null, // disable cancel while spinning
-            child: const Text('Please wait')),
+        SizedBox(
+          width: double.infinity,
+          child: ElevatedButton(
+            onPressed: _finished
+                ? () {
+                    SoundService.stop();
+                    Navigator.of(context).pop(widget.participants[_current]);
+                  }
+                : null,
+            style: ElevatedButton.styleFrom(backgroundColor: widget.color),
+            child: Text(_finished ? 'ዝጋ (Close)' : 'እባክዎን ይቆዩ (Please wait)'),
+          ),
+        ),
       ],
     );
   }

@@ -1,0 +1,111 @@
+{
+  "admins": {
+    "admin_low_default": {
+      "firstName": "Low",
+      "lastName": "Admin",
+      "fullName": "Low Level Admin",
+      "email": "admin@equb.et",
+      "username": "admin",
+      "password": "admin123",
+      "level": "low",
+      "role": "admin",
+      "status": "active",
+      "createdAt": "2026-08-22T07:48:18.566Z",
+      "updatedAt": "2026-08-22T07:48:18.567Z",
+      "lastLogin": "2026-08-22T09:18:11.072Z"
+    }
+  },
+  "users": {
+    "id_1787385067702_x7x0i": {
+      "firstName": "slafd",
+      "middleName": "sdv",
+      "lastName": "dslnv",
+      "fullName": "slafd sdv dslnv",
+      "email": "ffg@gmail.com",
+      "phoneNumber": "0987546534",
+      "uniqueId": "low01",
+      "nationalId": "low01",
+      "level": "low",
+      "equbLevel": "low",
+      "adminId": "admin_low_default",
+      "role": "user",
+      "status": "active",
+      "hasWon": true,
+      "participationHistory": [],
+      "balance": 0,
+      "createdAt": "2026-08-22T07:51:07.702Z",
+      "updatedAt": "2026-08-22T07:52:36.963Z",
+      "lastWinDate": "2026-08-22T07:52:36.963Z"
+    },
+    "id_1787385116459_etjtw": {
+      "firstName": "sdnsaklnc",
+      "middleName": "sd",
+      "lastName": "dn",
+      "fullName": "sdnsaklnc sd dn",
+      "email": "nca@gmail.com",
+      "phoneNumber": "0954567566",
+      "uniqueId": "low02",
+      "nationalId": "low02",
+      "level": "low",
+      "equbLevel": "low",
+      "adminId": "admin_low_default",
+      "role": "user",
+      "status": "active",
+      "hasWon": true,
+      "participationHistory": [],
+      "balance": 0,
+      "createdAt": "2026-08-22T07:51:56.459Z",
+      "updatedAt": "2026-08-22T07:52:24.313Z",
+      "lastWinDate": "2026-08-22T07:52:24.313Z"
+    }
+  },
+  "meta": {
+    "super_admin_profile": {
+      "firstName": "Super",
+      "lastName": "Admin",
+      "fullName": "Super Admin",
+      "email": "superadmin@equb.et",
+      "username": "superadmin",
+      "password": "admin123",
+      "role": "super_admin",
+      "createdAt": "2026-08-22T07:49:33.002Z",
+      "updatedAt": "2026-08-22T07:49:33.002Z"
+    }
+  },
+  "equbs": {},
+  "notifications": {},
+  "payments": {},
+  "draws": {
+    "id_1787385144313_xdu9z": {
+      "equbLevel": "low",
+      "adminId": "admin_low_default",
+      "winnerId": "id_1787385116459_etjtw",
+      "winnerName": "sdnsaklnc sd dn",
+      "winnerUniqueId": "low02",
+      "drawNumber": 1,
+      "participants": [
+        "id_1787385067702_x7x0i",
+        "id_1787385116459_etjtw"
+      ],
+      "totalParticipants": 2,
+      "eligibleRemaining": 1,
+      "status": "completed",
+      "createdAt": "2026-08-22T07:52:24.313Z"
+    },
+    "id_1787385156963_l8h24": {
+      "equbLevel": "low",
+      "adminId": "admin_low_default",
+      "winnerId": "id_1787385067702_x7x0i",
+      "winnerName": "slafd sdv dslnv",
+      "winnerUniqueId": "low01",
+      "drawNumber": 2,
+      "participants": [
+        "id_1787385067702_x7x0i"
+      ],
+      "totalParticipants": 1,
+      "eligibleRemaining": 0,
+      "status": "completed",
+      "createdAt": "2026-08-22T07:52:36.963Z"
+    }
+  }
+}

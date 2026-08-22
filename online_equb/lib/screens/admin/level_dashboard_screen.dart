@@ -1,7 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import 'package:go_router/go_router.dart';
 import '../../config/theme.dart';
+import '../../providers/auth_provider.dart';
 import '../../services/role_management_service.dart';
 import '../../services/api_service.dart';
+import '../../services/sound_service.dart';
+import '../../utils/constants.dart';
 import '../../widgets/equb_draw_wheel.dart';
 import 'admin_register_user_screen.dart';
 
@@ -115,17 +120,46 @@ class _LevelDashboardScreenState extends State<LevelDashboardScreen>
     }).toList();
   }
 
+  late final TextEditingController _settingsNameController;
+  late final TextEditingController _settingsEmailController;
+  late final TextEditingController _settingsUsernameController;
+  late final TextEditingController _settingsPasswordController;
+  late final TextEditingController _settingsConfirmPasswordController;
+  late final TextEditingController _settingsPhoneController;
+  late final TextEditingController _settingsAddressController;
+  bool _settingsSaving = false;
+  bool _obscureSettingsPass = true;
+
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 3, vsync: this);
+    _tabController = TabController(length: 4, vsync: this);
     _isAmharic = widget.isAmharic;
+    _settingsNameController = TextEditingController(
+        text: widget.data['fullName'] ?? widget.data['firstName'] ?? '');
+    _settingsEmailController = TextEditingController(
+        text: widget.data['email'] ?? '');
+    _settingsUsernameController = TextEditingController(
+        text: widget.data['username'] ?? widget.data['email']?.toString().split('@').first ?? '');
+    _settingsPasswordController = TextEditingController();
+    _settingsConfirmPasswordController = TextEditingController();
+    _settingsPhoneController = TextEditingController(
+        text: widget.data['phone'] ?? widget.data['phoneNumber'] ?? '');
+    _settingsAddressController = TextEditingController(
+        text: widget.data['address'] ?? '');
     _loadData();
   }
 
   @override
   void dispose() {
     _tabController.dispose();
+    _settingsNameController.dispose();
+    _settingsEmailController.dispose();
+    _settingsUsernameController.dispose();
+    _settingsPasswordController.dispose();
+    _settingsConfirmPasswordController.dispose();
+    _settingsPhoneController.dispose();
+    _settingsAddressController.dispose();
     super.dispose();
   }
 
@@ -133,12 +167,54 @@ class _LevelDashboardScreenState extends State<LevelDashboardScreen>
     setState(() => _loading = true);
     final users = await RoleManagementService.getUsersByLevel(widget.level);
     final history = await RoleManagementService.getDrawHistory(widget.level);
+
+    if (mounted) {
+      final authUser = context.read<AuthProvider>().user ?? widget.data;
+      if (_settingsNameController.text.isEmpty && authUser.isNotEmpty) {
+        _settingsNameController.text = (authUser['fullName'] ?? authUser['firstName'] ?? '').toString();
+        _settingsEmailController.text = (authUser['email'] ?? '').toString();
+        _settingsUsernameController.text = (authUser['username'] ?? authUser['email']?.toString().split('@').first ?? '').toString();
+        _settingsPhoneController.text = (authUser['phone'] ?? authUser['phoneNumber'] ?? '').toString();
+        _settingsAddressController.text = (authUser['address'] ?? '').toString();
+      }
+    }
+
     if (!mounted) return;
     setState(() {
       _participants = users;
       _drawHistory = history;
       _loading = false;
     });
+  }
+
+  Future<void> _confirmLogout() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Text(t('Logout', 'ውጣ')),
+        content: Text(t('Are you sure you want to log out of your session?', 'እርግጠኛ ነዎት ከመለያዎ መውጣት ይፈልጋሉ?')),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: Text(t('Cancel', 'ሰርዝ')),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.error,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            ),
+            onPressed: () => Navigator.pop(context, true),
+            child: Text(t('Logout', 'ውጣ'), style: const TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    if (!mounted) return;
+    final auth = context.read<AuthProvider>();
+    await auth.logout();
+    if (mounted) context.go('/login');
   }
 
   // ── build ─────────────────────────────────────────────────────────────────
@@ -153,7 +229,14 @@ class _LevelDashboardScreenState extends State<LevelDashboardScreen>
         foregroundColor: Colors.white,
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
-          onPressed: () => Navigator.pop(context),
+          onPressed: () {
+            if (Navigator.canPop(context)) {
+              Navigator.pop(context);
+            } else {
+              context.go('/home');
+            }
+          },
+          tooltip: t('Back', 'ተመለስ'),
         ),
         actions: [
           IconButton(
@@ -170,6 +253,35 @@ class _LevelDashboardScreenState extends State<LevelDashboardScreen>
             icon: const Icon(Icons.refresh),
             onPressed: _loadData,
           ),
+          Padding(
+            padding: const EdgeInsets.only(right: 8.0),
+            child: Material(
+              color: Colors.white.withOpacity(0.15),
+              borderRadius: BorderRadius.circular(10),
+              child: InkWell(
+                borderRadius: BorderRadius.circular(10),
+                onTap: _confirmLogout,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.logout_rounded, color: Colors.white, size: 18),
+                      const SizedBox(width: 4),
+                      Text(
+                        t('Logout', 'ውጣ'),
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
         ],
         bottom: TabBar(
           controller: _tabController,
@@ -180,6 +292,7 @@ class _LevelDashboardScreenState extends State<LevelDashboardScreen>
             Tab(text: t('Members', 'አባላት')),
             Tab(text: t('Draw Algorithm', 'የእጣ ስልተ ቀመር')),
             Tab(text: t('History', 'ታሪክ')),
+            Tab(text: t('Settings', 'መቼቶች')),
           ],
         ),
       ),
@@ -199,14 +312,135 @@ class _LevelDashboardScreenState extends State<LevelDashboardScreen>
                 _buildMembersTab(),
                 _buildDrawWheelTab(),
                 _buildHistoryTab(),
+                _buildSettingsTab(),
               ],
             ),
     );
   }
 
-  // ═══════════════════════════════════════════════════════════════════════════
-  // TAB 1 – Members
-  // ═══════════════════════════════════════════════════════════════════════════
+  Widget _buildExpertSystemAdvisor() {
+    final total = _participants.length;
+    final eligible = _eligible.length;
+    final remainingSlots = _maxSlots - total;
+
+    String levelTitle;
+    String priceRange;
+    String adviceText;
+    IconData levelIcon;
+    Color accentColor;
+
+    switch (widget.level.toLowerCase()) {
+      case 'medium':
+        levelTitle = t('Medium Level Equb (SME & Business Pool)', 'መካከለኛ ደረጃ እቁብ (አነስተኛና መካከለኛ ንግድ)');
+        priceRange = 'ETB 10,000 – 50,000 / cycle';
+        accentColor = AppColors.medium;
+        levelIcon = Icons.account_balance_wallet_rounded;
+        break;
+      case 'high':
+        levelTitle = t('High Level Equb (VIP Investment Pool)', 'ከፍተኛ ደረጃ እቁብ (ቪአይፒ ኢንቨስትመንት)');
+        priceRange = 'ETB 50,000+ / cycle';
+        accentColor = AppColors.high;
+        levelIcon = Icons.stars_rounded;
+        break;
+      default:
+        levelTitle = t('Low Level Equb (Micro-Savings Pool)', 'ዝቅተኛ ደረጃ እቁብ (አነስተኛ ቆጣቢዎች)');
+        priceRange = 'ETB 1,000 – 10,000 / cycle';
+        accentColor = AppColors.low;
+        levelIcon = Icons.savings_rounded;
+        break;
+    }
+
+    if (total == 0) {
+      adviceText = t(
+          '💡 Expert System Status: No members registered yet. Use "Add User" to register the first member for $levelTitle.',
+          '💡 የኤክስፐርት ሲስተም ሁኔታ፡ እስካሁን ምንም አባል አልተመዘገበም። "ተጠቃሚ ጨምር" በመጠቀም የመጀመሪያውን አባል ይመዝግቡ።');
+    } else if (eligible == 0) {
+      adviceText = t(
+          '⚠️ Expert System Insight: All active members have won previous draws! Reset cycle or add new members to initiate next draw.',
+          '⚠️ የኤክስፐርት ሲስተም ትንተና፡ ሁሉም ንቁ አባላት ቀደም ሲል አሸንፈዋል! ለቀጣይ እጣ አዲስ አባላት ይጨምሩ።');
+    } else if (eligible >= 2) {
+      adviceText = t(
+          '🎯 Expert System Advice: $eligible members are eligible for the random weighted spin! Proceed to "Draw Algorithm" tab to execute draw.',
+          '🎯 የኤክስፐርት ሲስተም ምክር፡ $eligible አባላት ለእጣው ብቁ ናቸው! እጣ ለማውጣት ወደ "የእጣ ስልተ ቀመር" ትር ይሂዱ።');
+    } else {
+      adviceText = t(
+          '📊 Expert System Analysis: 1 eligible member remaining ($eligible/$total). Capacity: $remainingSlots slots available.',
+          '📊 የኤክስፐርት ሲስተም ትንተና፡ 1 ብቁ አባል ቀርቷል። ክፍት ቦታዎች፡ $remainingSlots።');
+    }
+
+    return Container(
+      margin: const EdgeInsets.fromLTRB(12, 10, 12, 0),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: accentColor.withOpacity(0.08),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: accentColor.withOpacity(0.3)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: accentColor,
+              shape: BoxShape.circle,
+            ),
+            child: Icon(levelIcon, color: Colors.white, size: 20),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Expanded(
+                      child: Text(
+                        levelTitle,
+                        style: TextStyle(
+                          color: accentColor,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 13,
+                        ),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: accentColor.withOpacity(0.4)),
+                      ),
+                      child: Text(
+                        priceRange,
+                        style: TextStyle(
+                          color: accentColor,
+                          fontSize: 10,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  adviceText,
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: AppColors.textPrimary,
+                    height: 1.3,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   // ═══════════════════════════════════════════════════════════════════════════
   // TAB 1 – Members (Permanent Data Table & Card View)
   // ═══════════════════════════════════════════════════════════════════════════
@@ -231,6 +465,7 @@ class _LevelDashboardScreenState extends State<LevelDashboardScreen>
             ],
           ),
         ),
+        _buildExpertSystemAdvisor(),
         // Search + filter + view toggle
         Padding(
           padding: const EdgeInsets.fromLTRB(12, 10, 12, 4),
@@ -717,12 +952,16 @@ class _LevelDashboardScreenState extends State<LevelDashboardScreen>
   }
 
   void _showWinnerDialog(Map<String, dynamic> winner) {
-    final name = winner['fullName'] ?? '';
-    final uid = winner['uniqueId'] ?? '';
+    final name = (winner['fullName'] ?? winner['firstName'] ?? '').toString();
+    final uid = (winner['uniqueId'] ?? winner['userId'] ?? winner['id'] ?? '').toString();
+
+    // Trigger 3-times repeated Amharic winner announcement
+    SoundService.speakWinnerRepeatedThreeTimes(fullName: name, uniqueId: uid);
+
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (_) => AlertDialog(
+      builder: (dialogCtx) => AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         title: Column(children: [
           Icon(Icons.emoji_events, color: _levelColor, size: 56),
@@ -768,9 +1007,19 @@ class _LevelDashboardScreenState extends State<LevelDashboardScreen>
           SizedBox(
             width: double.infinity,
             child: ElevatedButton(
-              onPressed: () => Navigator.pop(context),
-              style: ElevatedButton.styleFrom(backgroundColor: _levelColor),
-              child: Text(t('Close', 'ዝጋ')),
+              onPressed: () {
+                SoundService.stop();
+                Navigator.of(dialogCtx, rootNavigator: true).pop();
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: _levelColor,
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              ),
+              child: Text(
+                t('Close', 'ዝጋ'),
+                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.white),
+              ),
             ),
           ),
         ],
@@ -782,77 +1031,286 @@ class _LevelDashboardScreenState extends State<LevelDashboardScreen>
   // TAB 3 – History
   // ═══════════════════════════════════════════════════════════════════════════
   Widget _buildHistoryTab() {
-    if (_drawHistory.isEmpty) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.history, size: 64, color: Colors.grey.shade400),
-            const SizedBox(height: 16),
-            Text(
-              t('No draws yet. Run the wheel to start.',
-                  'ምንም ስዕሎች የሉም። ስዕሉን ያሽከርክሩ።'),
-              style: const TextStyle(color: AppColors.textSecondary),
+    final priceRangeText = AppConstants.getLevelPriceRange(widget.level, isAmharic: _isAmharic);
+    final netPrizeText = AppConstants.getLevelNetPrize(widget.level, isAmharic: _isAmharic);
+
+    return Column(
+      children: [
+        // Price Range & Prize Summary Banner
+        Container(
+          width: double.infinity,
+          margin: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              colors: [_levelColor.withOpacity(0.15), _levelColor.withOpacity(0.05)],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
             ),
-          ],
-        ),
-      );
-    }
-
-    return RefreshIndicator(
-      onRefresh: _loadData,
-      child: ListView.builder(
-        padding: const EdgeInsets.all(16),
-        itemCount: _drawHistory.length,
-        itemBuilder: (_, i) {
-          final draw = _drawHistory[i];
-          final drawNum = draw['drawNumber'] ?? (i + 1);
-          final winnerName = draw['winnerName'] ?? 'N/A';
-          final winnerId = draw['winnerUniqueId'] ?? draw['winnerId'] ?? 'N/A';
-          final createdAt = draw['createdAt'];
-          String dateStr = '';
-          if (createdAt != null) {
-            try {
-              final dt = createdAt is String
-                  ? DateTime.parse(createdAt)
-                  : (createdAt as dynamic).toDate();
-              dateStr =
-                  '${dt.year}-${dt.month.toString().padLeft(2, '0')}-${dt.day.toString().padLeft(2, '0')}';
-            } catch (_) {
-              dateStr = createdAt.toString().substring(0, 10);
-            }
-          }
-
-          return Card(
-            margin: const EdgeInsets.only(bottom: 10),
-            shape:
-                RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-            child: ListTile(
-              leading: CircleAvatar(
-                backgroundColor: _levelColor,
-                child: Text('$drawNum',
-                    style: const TextStyle(
-                        color: Colors.white, fontWeight: FontWeight.bold)),
-              ),
-              title: Text(winnerName,
-                  style: const TextStyle(fontWeight: FontWeight.bold)),
-              subtitle: Text(
-                '${t('ID', 'መ')}: $winnerId\n${t('Date', 'ቀን')}: $dateStr',
-                style: const TextStyle(height: 1.4),
-              ),
-              isThreeLine: true,
-              trailing: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: _levelColor.withOpacity(0.3)),
+          ),
+          child: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(10),
                 decoration: BoxDecoration(
-                  color: AppColors.warning.withOpacity(0.12),
-                  borderRadius: BorderRadius.circular(10),
+                  color: _levelColor.withOpacity(0.2),
+                  shape: BoxShape.circle,
                 ),
-                child: const Icon(Icons.emoji_events, color: AppColors.warning),
+                child: Icon(Icons.emoji_events_rounded, color: _levelColor, size: 24),
               ),
-            ),
-          );
-        },
-      ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Text(
+                          '${_levelLabel.toUpperCase()} LEVEL HISTORY',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                            color: _levelColor,
+                            letterSpacing: 0.5,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      '${t("Price", "ክፍያ")}: $priceRangeText',
+                      style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
+                    ),
+                    Text(
+                      '${t("Prize", "የአሸናፊ ድል አበል")}: $netPrizeText',
+                      style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: _levelColor),
+                    ),
+                  ],
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(
+                  color: _levelColor,
+                  borderRadius: BorderRadius.circular(12),
+                  boxShadow: [
+                    BoxShadow(color: _levelColor.withOpacity(0.3), blurRadius: 6, offset: const Offset(0, 2)),
+                  ],
+                ),
+                child: Text(
+                  '${_drawHistory.length} ${t("Winners", "አሸናፊዎች")}',
+                  style: const TextStyle(fontSize: 12, color: Colors.white, fontWeight: FontWeight.bold),
+                ),
+              ),
+            ],
+          ),
+        ),
+
+        Expanded(
+          child: _drawHistory.isEmpty
+              ? Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.all(20),
+                          decoration: BoxDecoration(
+                            color: _levelColor.withOpacity(0.1),
+                            shape: BoxShape.circle,
+                          ),
+                          child: Icon(Icons.emoji_events_outlined, size: 64, color: _levelColor),
+                        ),
+                        const SizedBox(height: 16),
+                        Text(
+                          t('No draw history recorded yet for $_levelLabel level.',
+                              'ለ$_levelLabel ደረጃ እስካሁን የተመዘገበ የስዕል ታሪክ የለም።'),
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(
+                              fontSize: 15, fontWeight: FontWeight.w600, color: AppColors.textPrimary),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          t('Spin the algorithm wheel to draw weekly winners!',
+                              'የሳምንቱን አሸናፊዎች ለመምረጥ ስዕሉን ያሽከርክሩ!'),
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
+                        ),
+                      ],
+                    ),
+                  ),
+                )
+              : RefreshIndicator(
+                  onRefresh: _loadData,
+                  child: ListView.builder(
+                    padding: const EdgeInsets.fromLTRB(16, 4, 16, 20),
+                    itemCount: _drawHistory.length,
+                    itemBuilder: (_, i) {
+                      final draw = _drawHistory[i];
+                      final drawNum = draw['drawNumber'] ?? (i + 1);
+                      final winnerName = (draw['winnerName'] ?? draw['fullName'] ?? 'N/A').toString();
+                      final winnerId = (draw['winnerUniqueId'] ?? draw['winnerId'] ?? draw['uniqueId'] ?? 'N/A').toString();
+                      final createdAt = draw['createdAt'];
+
+                      String fullDateTimeStr = '';
+                      if (createdAt != null) {
+                        try {
+                          final dt = createdAt is String
+                              ? DateTime.parse(createdAt)
+                              : (createdAt as dynamic).toDate();
+                          final hour = dt.hour % 12 == 0 ? 12 : dt.hour % 12;
+                          final period = dt.hour >= 12 ? 'PM' : 'AM';
+                          final monthStr = dt.month.toString().padLeft(2, '0');
+                          final dayStr = dt.day.toString().padLeft(2, '0');
+                          final minStr = dt.minute.toString().padLeft(2, '0');
+                          fullDateTimeStr = '${dt.year}-$monthStr-$dayStr  •  $hour:$minStr $period';
+                        } catch (_) {
+                          fullDateTimeStr = createdAt.toString();
+                          if (fullDateTimeStr.length > 16) {
+                            fullDateTimeStr = fullDateTimeStr.substring(0, 16);
+                          }
+                        }
+                      } else {
+                        final now = DateTime.now();
+                        final hour = now.hour % 12 == 0 ? 12 : now.hour % 12;
+                        final period = now.hour >= 12 ? 'PM' : 'AM';
+                        fullDateTimeStr = '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}  •  $hour:${now.minute.toString().padLeft(2, '0')} $period';
+                      }
+
+                      return Container(
+                        margin: const EdgeInsets.only(bottom: 12),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(18),
+                          border: Border.all(color: _levelColor.withOpacity(0.2), width: 1.2),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withOpacity(0.04),
+                              blurRadius: 10,
+                              offset: const Offset(0, 3),
+                            ),
+                          ],
+                        ),
+                        child: Padding(
+                          padding: const EdgeInsets.all(14),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  // Round / Week Badge
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                                    decoration: BoxDecoration(
+                                      color: _levelColor,
+                                      borderRadius: BorderRadius.circular(20),
+                                    ),
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        const Icon(Icons.star_rounded, color: Colors.amberAccent, size: 14),
+                                        const SizedBox(width: 4),
+                                        Text(
+                                          _isAmharic ? '$drawNumኛ ሳምንት አሸናፊ' : 'Round #$drawNum Winner',
+                                          style: const TextStyle(
+                                            color: Colors.white,
+                                            fontSize: 11,
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  const Spacer(),
+                                  // Trophy Icon
+                                  Container(
+                                    padding: const EdgeInsets.all(6),
+                                    decoration: BoxDecoration(
+                                      color: Colors.amber.withOpacity(0.15),
+                                      shape: BoxShape.circle,
+                                    ),
+                                    child: const Icon(Icons.emoji_events, color: Colors.amber, size: 18),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 10),
+                              Row(
+                                children: [
+                                  CircleAvatar(
+                                    radius: 22,
+                                    backgroundColor: _levelColor.withOpacity(0.15),
+                                    child: Text(
+                                      winnerName.isNotEmpty ? winnerName[0].toUpperCase() : 'W',
+                                      style: TextStyle(
+                                        color: _levelColor,
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 18,
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          winnerName,
+                                          style: const TextStyle(
+                                            fontSize: 16,
+                                            fontWeight: FontWeight.bold,
+                                            color: AppColors.textPrimary,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 2),
+                                        Text(
+                                          '${t("Unique ID", "መታወቂያ")}: $winnerId',
+                                          style: TextStyle(
+                                            fontSize: 12,
+                                            fontWeight: FontWeight.w600,
+                                            color: _levelColor,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const Divider(height: 18, thickness: 0.8),
+                              Row(
+                                children: [
+                                  Icon(Icons.access_time_rounded, size: 14, color: Colors.grey.shade600),
+                                  const SizedBox(width: 6),
+                                  Text(
+                                    fullDateTimeStr,
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      color: Colors.grey.shade700,
+                                      fontWeight: FontWeight.w500,
+                                    ),
+                                  ),
+                                  const Spacer(),
+                                  Text(
+                                    netPrizeText,
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.bold,
+                                      color: _levelColor,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+        ),
+      ],
     );
   }
 
@@ -1034,5 +1492,244 @@ class _LevelDashboardScreenState extends State<LevelDashboardScreen>
         ]),
       ),
     );
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // TAB 4 – Settings
+  // ═══════════════════════════════════════════════════════════════════════════
+  Widget _buildSettingsTab() {
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        Card(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: _levelColor.withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Icon(Icons.manage_accounts, color: _levelColor, size: 26),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            t('Admin Account Settings', 'የአስተዳዳሪ መለያ መቼቶች'),
+                            style: TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 17,
+                                color: _levelColor),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            t('Update your username, password, phone, and details for $_levelLabel level',
+                              'ለ$_levelLabel ደረጃ የእርስዎን ተጠቃሚ ስም፣ የይለፍ ቃል፣ ስልክ እና መረጃዎችን ያሻሽሉ'),
+                            style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                const Divider(height: 1),
+                const SizedBox(height: 16),
+
+                // Full Name
+                Text(t('Full Name', 'ሙሉ ስም'),
+                    style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+                const SizedBox(height: 6),
+                TextField(
+                  controller: _settingsNameController,
+                  decoration: InputDecoration(
+                    prefixIcon: const Icon(Icons.person),
+                    hintText: t('Admin Full Name', 'የአስተዳዳሪ ሙሉ ስም'),
+                  ),
+                ),
+                const SizedBox(height: 14),
+
+                // Email Address
+                Text(t('Email Address', 'ኢሜይል አድራሻ'),
+                    style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+                const SizedBox(height: 6),
+                TextField(
+                  controller: _settingsEmailController,
+                  keyboardType: TextInputType.emailAddress,
+                  decoration: const InputDecoration(
+                    prefixIcon: Icon(Icons.email),
+                    hintText: 'admin@equb.et',
+                  ),
+                ),
+                const SizedBox(height: 14),
+
+                // Username
+                Text(t('Username', 'ተጠቃሚ ስም'),
+                    style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+                const SizedBox(height: 6),
+                TextField(
+                  controller: _settingsUsernameController,
+                  decoration: const InputDecoration(
+                    prefixIcon: Icon(Icons.alternate_email),
+                    hintText: 'admin_username',
+                  ),
+                ),
+                const SizedBox(height: 14),
+
+                // Phone Number
+                Text(t('Phone Number', 'ስልክ ቁጥር'),
+                    style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+                const SizedBox(height: 6),
+                TextField(
+                  controller: _settingsPhoneController,
+                  keyboardType: TextInputType.phone,
+                  decoration: const InputDecoration(
+                    prefixIcon: Icon(Icons.phone),
+                    hintText: '09XXXXXXXX',
+                  ),
+                ),
+                const SizedBox(height: 14),
+
+                // Address
+                Text(t('Address', 'አድራሻ'),
+                    style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+                const SizedBox(height: 6),
+                TextField(
+                  controller: _settingsAddressController,
+                  decoration: InputDecoration(
+                    prefixIcon: const Icon(Icons.location_on),
+                    hintText: t('Addis Ababa, Ethiopia', 'አዲስ አበባ፣ ኢትዮጵያ'),
+                  ),
+                ),
+                const SizedBox(height: 14),
+
+                // Password & Confirm Password
+                Text(t('New Password (leave blank to keep current)',
+                       'አዲስ የይለፍ ቃል (አሁን ያለውን ለማቆየት ባዶ ይተውት)'),
+                    style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+                const SizedBox(height: 6),
+                TextField(
+                  controller: _settingsPasswordController,
+                  obscureText: _obscureSettingsPass,
+                  decoration: InputDecoration(
+                    prefixIcon: const Icon(Icons.lock_outline),
+                    hintText: '••••••••',
+                    suffixIcon: IconButton(
+                      icon: Icon(_obscureSettingsPass ? Icons.visibility_off : Icons.visibility),
+                      onPressed: () => setState(() => _obscureSettingsPass = !_obscureSettingsPass),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 14),
+
+                Text(t('Confirm New Password', 'አዲሱን የይለፍ ቃል ድገም'),
+                    style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+                const SizedBox(height: 6),
+                TextField(
+                  controller: _settingsConfirmPasswordController,
+                  obscureText: _obscureSettingsPass,
+                  decoration: const InputDecoration(
+                    prefixIcon: Icon(Icons.lock_clock),
+                    hintText: '••••••••',
+                  ),
+                ),
+                const SizedBox(height: 24),
+
+                // Save Button
+                SizedBox(
+                  width: double.infinity,
+                  height: 50,
+                  child: ElevatedButton.icon(
+                    onPressed: _settingsSaving ? null : _saveAdminSettings,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: _levelColor,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    ),
+                    icon: _settingsSaving
+                        ? const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
+                          )
+                        : const Icon(Icons.save, color: Colors.white),
+                    label: Text(
+                      _settingsSaving
+                          ? t('Saving Changes…', 'ለውጦችን በማስቀመጥ ላይ…')
+                          : t('Save Account Settings', 'የመለያ መቼቶችን አስቀምጥ'),
+                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: Colors.white),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _saveAdminSettings() async {
+    final pass = _settingsPasswordController.text;
+    final confirm = _settingsConfirmPasswordController.text;
+
+    if (pass.isNotEmpty && pass != confirm) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(t('Passwords do not match.', 'የይለፍ ቃሎቹ አይመሳሰሉም።')),
+        backgroundColor: AppColors.error,
+      ));
+      return;
+    }
+
+    setState(() => _settingsSaving = true);
+
+    final updates = <String, dynamic>{
+      'fullName': _settingsNameController.text.trim(),
+      'email': _settingsEmailController.text.trim().toLowerCase(),
+      'username': _settingsUsernameController.text.trim(),
+      'phone': _settingsPhoneController.text.trim(),
+      'address': _settingsAddressController.text.trim(),
+    };
+    if (pass.isNotEmpty) {
+      updates['password'] = pass;
+    }
+
+    final auth = context.read<AuthProvider>();
+    final adminId = widget.adminId.isNotEmpty
+        ? widget.adminId
+        : (widget.data['adminId'] ?? widget.data['id'] ?? auth.user?['adminId'] ?? auth.user?['uid'] ?? 'super_admin').toString();
+    final ok = await RoleManagementService.updateAdmin(adminId, updates);
+
+    setState(() => _settingsSaving = false);
+    if (!mounted) return;
+
+    if (ok) {
+      if (auth.user != null) {
+        auth.refreshUser({
+          ...auth.user!,
+          ...updates,
+        });
+      }
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(t('Admin settings saved successfully.', 'የአስተዳዳሪ መቼቶች በተሳካ ሁኔታ ተቀምጠዋል።')),
+        backgroundColor: AppColors.success,
+      ));
+      _settingsPasswordController.clear();
+      _settingsConfirmPasswordController.clear();
+      widget.onRefresh();
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(t('Failed to save settings.', 'መቼቶችን ማስቀመጥ አልተቻለም።')),
+        backgroundColor: AppColors.error,
+      ));
+    }
   }
 }

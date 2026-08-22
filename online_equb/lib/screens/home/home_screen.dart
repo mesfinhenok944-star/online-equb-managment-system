@@ -6,6 +6,7 @@ import '../../providers/auth_provider.dart';
 import '../../services/api_service.dart';
 import '../../services/firestore_service.dart';
 import '../../utils/constants.dart';
+import '../equb/equb_history_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -338,69 +339,7 @@ class _HomeScreenState extends State<HomeScreen> {
                               const SizedBox(height: 24),
                             ],
 
-                            // Login / Admin Action Card
-                            if (!auth.isLoggedIn)
-                              Card(
-                                elevation: 3,
-                                shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(16)),
-                                child: Padding(
-                                  padding: const EdgeInsets.all(16),
-                                  child: Row(
-                                    children: [
-                                      Container(
-                                        padding: const EdgeInsets.all(12),
-                                        decoration: BoxDecoration(
-                                          color: AppColors.primary
-                                              .withOpacity(0.1),
-                                          shape: BoxShape.circle,
-                                        ),
-                                        child: const Icon(Icons.login,
-                                            color: AppColors.primary, size: 28),
-                                      ),
-                                      const SizedBox(width: 16),
-                                      Expanded(
-                                        child: Column(
-                                          crossAxisAlignment:
-                                              CrossAxisAlignment.start,
-                                          children: [
-                                            Text(
-                                              isAmharic
-                                                  ? 'ወደ መለያዎ ይግቡ'
-                                                  : 'Sign In to Your Account',
-                                              style: const TextStyle(
-                                                  fontWeight: FontWeight.bold,
-                                                  fontSize: 16),
-                                            ),
-                                            Text(
-                                              isAmharic
-                                                  ? 'የሱፐር አስተዳዳሪ፣ አስተዳዳሪ ወይም አባል መለያ ይጠቀሙ'
-                                                  : 'Access Super Admin, Admin, or Member dashboard',
-                                              style: const TextStyle(
-                                                  fontSize: 12,
-                                                  color:
-                                                      AppColors.textSecondary),
-                                            ),
-                                          ],
-                                        ),
-                                      ),
-                                      ElevatedButton(
-                                        onPressed: () => context.go('/login'),
-                                        style: ElevatedButton.styleFrom(
-                                          backgroundColor: AppColors.primary,
-                                          shape: RoundedRectangleBorder(
-                                            borderRadius:
-                                                BorderRadius.circular(12),
-                                          ),
-                                        ),
-                                        child: Text(isAmharic ? 'ግባ' : 'Login'),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ),
 
-                            const SizedBox(height: 20),
 
                             // Recent Notifications / System Announcements
                             if (_notifications.isNotEmpty) ...[
@@ -479,50 +418,50 @@ class _HomeScreenState extends State<HomeScreen> {
       'low' => {
           'level': 'low',
           'title': isAmharic ? 'ዝቅተኛ ደረጃ እቁብ' : 'Low Level Equb',
-          'price': '5,000 ETB',
-          'prize': '475,000 ETB',
-          'participants': '100 Participants',
-          'participantsAm': '100 ተሳታፊዎች',
+          'price': AppConstants.getLevelPriceRange('low', isAmharic: isAmharic),
+          'prize': AppConstants.getLevelNetPrize('low', isAmharic: isAmharic),
+          'participants': '100+ Participants (Up to 1,000)',
+          'participantsAm': '100+ ተሳታፊዎች (እስከ 1,000)',
           'cycle': isAmharic ? 'በየሳምንቱ (እሑድ)' : 'Weekly (Every Sunday)',
           'color': const Color(0xFF0984E3),
           'bgGradient': const [Color(0xFF74B9FF), Color(0xFF0984E3)],
           'icon': Icons.trending_up,
           'admin': 'Low Level Admin',
           'desc': isAmharic
-              ? 'ተመጣጣኝ የሳምንት እቁብ ለ5000 ብር ክፍያ ተሳታፊዎች። ፍጹም ግልጽ መንኮራኩር!'
-              : 'Affordable weekly Equb for 5,000 ETB participants with instant payouts.',
+              ? 'ተመጣጣኝ የሳምንት እቁብ (1000 - 5000 ብር ክፍያ)። ጠቅላላ የአሸናፊ ድል አበል እስከ 495,000 ብር!'
+              : 'Affordable weekly Equb (1k - 5k ETB contribution) with net prize up to 495,000 ETB!',
         },
       'medium' => {
           'level': 'medium',
           'title': isAmharic ? 'መካከለኛ ደረጃ እቁብ' : 'Medium Level Equb',
-          'price': '10,000 ETB',
-          'prize': '465,000 ETB',
-          'participants': '50 Participants',
-          'participantsAm': '50 ተሳታፊዎች',
-          'cycle': isAmharic ? 'በየሁለት ሳምንቱ' : 'Bi-Weekly (Every 2nd Sunday)',
+          'price': AppConstants.getLevelPriceRange('medium', isAmharic: isAmharic),
+          'prize': AppConstants.getLevelNetPrize('medium', isAmharic: isAmharic),
+          'participants': '100+ Participants (Up to 1,000)',
+          'participantsAm': '100+ ተሳታፊዎች (እስከ 1,000)',
+          'cycle': isAmharic ? 'በየሳምንቱ / በየሁለት ሳምንቱ' : 'Weekly / Bi-Weekly',
           'color': const Color(0xFFE67E22),
           'bgGradient': const [Color(0xFFF39C12), Color(0xFFD35400)],
           'icon': Icons.stars,
           'admin': 'Medium Level Admin',
           'desc': isAmharic
-              ? 'ለ10,000 ብር ተሳታፊዎች የተዘጋጀ ተመራጭ እቁብ። ተጠቃሚው አንዴ ካሸነፈ እስከ ዙሩ ማጠናቀቂያ አይሳተፍም።'
-              : 'Standard Equb with high return for 10,000 ETB weekly contributions.',
+              ? 'ለ6,000 - 10,000 ብር ተሳታፊዎች የተዘጋጀ ተመራጭ እቁብ። ጠቅላላ የአሸናፊ ድል አበል እስከ 990,000 ብር!'
+              : 'Standard Equb for 6k - 10k ETB contributions with net prize up to 990,000 ETB!',
         },
       'high' => {
           'level': 'high',
           'title': isAmharic ? 'ከፍተኛ ደረጃ እቁብ' : 'High Level Equb',
-          'price': '20,000 ETB',
-          'prize': '360,000 ETB',
-          'participants': '20 Participants',
-          'participantsAm': '20 ተሳታፊዎች',
-          'cycle': isAmharic ? 'በየወሩ (የመጨረሻው እሑድ)' : 'Monthly (Last Sunday)',
+          'price': AppConstants.getLevelPriceRange('high', isAmharic: isAmharic),
+          'prize': AppConstants.getLevelNetPrize('high', isAmharic: isAmharic),
+          'participants': '100+ Participants (Up to 1,000)',
+          'participantsAm': '100+ ተሳታፊዎች (እስከ 1,000)',
+          'cycle': isAmharic ? 'በየሳምንቱ / በየወሩ' : 'Weekly / Monthly',
           'color': const Color(0xFF6C5CE7),
           'bgGradient': const [Color(0xFFA29BFE), Color(0xFF6C5CE7)],
           'icon': Icons.workspace_premium,
           'admin': 'High Level Admin',
           'desc': isAmharic
-              ? 'ከፍተኛ ተመላሽ ያለው ፕሪሚየም እቁብ ለ20,000 ብር አባላት። በብሔራዊ መታወቂያ 1-ለ-1 የተረጋገጠ።'
-              : 'Premium Equb for 20,000 ETB contribution members with dedicated VIP admin.',
+              ? 'ከፍተኛ ተመላሽ ያለው ፕሪሚየም እቁብ (11,000 - 20,000 ብር ክፍያ)። ጠቅላላ የአሸናፊ ድል አበል እስከ 1,980,000 ብር!'
+              : 'Premium Equb for 11k - 20k ETB contribution members with net prize up to 1,980,000 ETB!',
         },
       _ => {},
     };
@@ -1001,6 +940,38 @@ class _HomeScreenState extends State<HomeScreen> {
                           fontSize: 16,
                           fontWeight: FontWeight.bold,
                           color: Colors.white),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    onPressed: () {
+                      Navigator.pop(ctx);
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => EqubHistoryScreen(
+                            initialLevel: (info['level'] ?? 'low').toString(),
+                          ),
+                        ),
+                      );
+                    },
+                    icon: Icon(Icons.history, color: mainColor),
+                    label: Text(
+                      isAmharic ? 'የእጣ ታሪክ ይመልከቱ' : 'View Level Draw History',
+                      style: TextStyle(
+                        color: mainColor,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    style: OutlinedButton.styleFrom(
+                      side: BorderSide(color: mainColor, width: 1.5),
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
                     ),
                   ),
                 ),

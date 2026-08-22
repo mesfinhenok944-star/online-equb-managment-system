@@ -8,9 +8,9 @@ const router = Router();
 router.use(verifyToken);
 
 const EQUB_DEFAULTS = {
-  low:    { equbId: 'equb_low',    name: 'ዝቅተኛ · Low Level EQUB',    level: 'low',    price: 5000,  netPrize: 465000, adminFee: 35000, maxParticipants: 100 },
-  medium: { equbId: 'equb_medium', name: 'መካከለኛ · Medium Level EQUB', level: 'medium', price: 10000, netPrize: 465000, adminFee: 35000, maxParticipants: 100 },
-  high:   { equbId: 'equb_high',   name: 'ከፍተኛ · High Level EQUB',   level: 'high',   price: 20000, netPrize: 360000, adminFee: 40000, maxParticipants: 100 },
+  low:    { equbId: 'equb_low',    name: 'ዝቅተኛ · Low Level EQUB',    level: 'low',    price: 5000,  priceRange: '1,000 – 5,000 ETB / week',  netPrize: 465000, adminFee: 35000, maxParticipants: 1000 },
+  medium: { equbId: 'equb_medium', name: 'መካከለኛ · Medium Level EQUB', level: 'medium', price: 10000, priceRange: '6,000 – 10,000 ETB / week', netPrize: 465000, adminFee: 35000, maxParticipants: 1000 },
+  high:   { equbId: 'equb_high',   name: 'ከፍተኛ · High Level EQUB',   level: 'high',   price: 20000, priceRange: '11,000 – 20,000 ETB / week', netPrize: 360000, adminFee: 40000, maxParticipants: 1000 },
 };
 
 async function getOrBuildEqub(level) {
@@ -36,14 +36,17 @@ router.get('/', async (req, res) => {
 
     const levelsMap = new Map();
 
+    // Fetch all active users once
+    const allUsersSnap = await db.collection('users').get();
+    const activeUsers = allUsersSnap.docs.filter(d => d.data().status !== 'deleted');
+
     // 1. Defaults
     for (const level of ['low', 'medium', 'high']) {
-      const snap = await db.collection('users')
-        .where('equbLevel', '==', level).where('status', '!=', 'deleted').get();
+      const count = activeUsers.filter(d => (d.data().equbLevel || d.data().level) === level).length;
       const def = EQUB_DEFAULTS[level];
       levelsMap.set(level, {
         ...def,
-        currentParticipants: snap.size,
+        currentParticipants: count,
         status: 'active',
         description: `${def.name} — ${def.price.toLocaleString()} ETB/cycle`,
       });
@@ -52,11 +55,10 @@ router.get('/', async (req, res) => {
     // 2. Custom registered levels
     for (const item of storedEqubs) {
       const key = item.level || item.id;
-      const snap = await db.collection('users')
-        .where('equbLevel', '==', key).where('status', '!=', 'deleted').get();
+      const count = activeUsers.filter(d => (d.data().equbLevel || d.data().level) === key).length;
       levelsMap.set(key, {
         ...item,
-        currentParticipants: snap.size,
+        currentParticipants: count,
         status: item.status || 'active',
       });
     }
@@ -173,9 +175,26 @@ router.get('/:id/stats', async (req, res) => {
     const cfg   = EQUB_DEFAULTS[level] || EQUB_DEFAULTS.low;
 
     const [usersSnap, drawsSnap] = await Promise.all([
-      db.collection('users').where('equbLevel', '==', level).where('status', '!=', 'deleted').get(),
-      db.collection('draws').where('equbLevel', '==', level).get(),
+      db.collection('users').get(),
+      db.collection('draws').get(),
     ]);
+
+    const levelUsers = usersSnap.docs.filter(d =>
+      (d.data().equbLevel === level || d.data().level === level) &&
+      d.data().status !== 'deleted'
+    );
+    const levelDraws = drawsSnap.docs.filter(d =>
+      d.data().equbLevel === level || d.data().level === level
+    );
+
+    return res.json({
+      equbId: id,
+      level,
+      currentParticipants: levelUsers.length,
+      maxParticipants: cfg.maxParticipants,
+      totalCollected: levelUsers.length * cfg.price,
+      drawsHeld: levelDraws.length,
+    });
 
     return res.json({
       equbId: id,
@@ -196,10 +215,12 @@ router.get('/:id/stats', async (req, res) => {
 router.get('/:id/draws', async (req, res) => {
   try {
     const level = req.params.id.replace('equb_', '');
-    const snap  = await db.collection('draws')
-      .where('equbLevel', '==', level)
-      .orderBy('drawNumber', 'desc').get();
-    return res.json(snap.docs.map(d => ({ drawId: d.id, ...d.data() })));
+    const snap = await db.collection('draws').get();
+    const draws = snap.docs
+      .map(d => ({ drawId: d.id, ...d.data() }))
+      .filter(d => (d.equbLevel === level || d.level === level || d.equbLevel === req.params.id || d.level === req.params.id))
+      .sort((a, b) => (b.drawNumber || 0) - (a.drawNumber || 0));
+    return res.json(draws);
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }

@@ -2,6 +2,7 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:confetti/confetti.dart';
+import '../services/sound_service.dart';
 
 class EqubDrawWheel extends StatefulWidget {
   final List<Map<String, dynamic>> participants;
@@ -50,6 +51,7 @@ class _EqubDrawWheelState extends State<EqubDrawWheel>
 
   @override
   void dispose() {
+    SoundService.stop();
     _rotationController.dispose();
     _confettiController.dispose();
     super.dispose();
@@ -66,6 +68,9 @@ class _EqubDrawWheelState extends State<EqubDrawWheel>
   Future<void> _startSpin() async {
     final eligible = _eligibleParticipants;
     if (_spinning || widget.disabled || eligible.isEmpty) return;
+
+    // Start Amharic spin audio: "እቁቡ ለውጥ ነው አሁን በመዞር ላይ ነው።"
+    SoundService.speakSpinningAnnouncement();
 
     setState(() {
       _spinning = true;
@@ -114,7 +119,7 @@ class _EqubDrawWheelState extends State<EqubDrawWheel>
       // Tick sound every slice boundary
       if (angleDelta >= sliceAngle) {
         _lastTickAngle = _spinAnimation.value;
-        SystemSound.play(SystemSoundType.click);
+        SoundService.playClickSound();
       }
       setState(() {
         _currentAngle = _spinAnimation.value;
@@ -138,7 +143,13 @@ class _EqubDrawWheelState extends State<EqubDrawWheel>
     });
 
     _confettiController.play();
-    SystemSound.play(SystemSoundType.click);
+    SoundService.playClickSound();
+
+    final winnerName = (selected['fullName'] ?? selected['firstName'] ?? '').toString();
+    final winnerId = (selected['uniqueId'] ?? selected['userId'] ?? selected['id'] ?? '').toString();
+
+    // Announce winner 3 times loudly in Amharic
+    SoundService.speakWinnerRepeatedThreeTimes(fullName: winnerName, uniqueId: winnerId);
 
     final originalIndex = widget.participants.indexWhere((p) =>
         (p['userId'] ?? p['id'] ?? p['participantId']).toString() ==
@@ -316,7 +327,7 @@ class _EqubDrawWheelState extends State<EqubDrawWheel>
 
         const SizedBox(height: 12),
 
-        // Winner Announcement Card
+        // Winner Announcement Card with working Close button
         if (_selectedParticipant != null)
           Container(
             margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -372,6 +383,16 @@ class _EqubDrawWheelState extends State<EqubDrawWheel>
                       ),
                     ],
                   ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.close_rounded, color: Colors.white, size: 24),
+                  onPressed: () {
+                    SoundService.stop();
+                    setState(() {
+                      _selectedParticipant = null;
+                    });
+                  },
+                  tooltip: 'ዝጋ (Close)',
                 ),
               ],
             ),
@@ -558,7 +579,7 @@ class _EthiopianBingoWheelPainter extends CustomPainter {
       // Slice Divider Line
       final dividerPaint = Paint()
         ..color = const Color(0xFFFFD700)
-        ..strokeWidth = 1.5;
+        ..strokeWidth = count > 60 ? 0.4 : (count > 30 ? 0.8 : 1.5);
       final lineEnd = Offset(
         center.dx + wheelRadius * cos(startAngle),
         center.dy + wheelRadius * sin(startAngle),
@@ -571,7 +592,7 @@ class _EthiopianBingoWheelPainter extends CustomPainter {
         final rawName = (participant['firstName'] ?? participant['fullName'] ?? '').toString().trim();
         final firstName = rawName.isNotEmpty ? rawName.split(' ').first : 'User ${i + 1}';
         final rawId = (participant['uniqueId'] ?? participant['userId'] ?? '').toString().trim();
-        final idStr = rawId.isNotEmpty ? 'ID:#$rawId' : '#${i + 1}';
+        final idStr = rawId.isNotEmpty ? '#$rawId' : '#${i + 1}';
 
         canvas.save();
         final textAngle = startAngle + (sliceAngle / 2);
@@ -580,16 +601,20 @@ class _EthiopianBingoWheelPainter extends CustomPainter {
 
         final textColor = (color == const Color(0xFFFED100)) ? Colors.black : Colors.white;
 
-        // Line 1: First Name
+        // Always draw BOTH First Name and Unique ID clearly inside every slice
         final nameSpan = TextSpan(
           text: firstName,
           style: TextStyle(
             color: textColor,
-            fontSize: count > 14 ? 8 : (count > 8 ? 10 : 12),
+            fontSize: count > 80
+                ? 5.2
+                : (count > 50
+                    ? 6.2
+                    : (count > 25 ? 7.5 : (count > 14 ? 8.5 : 11.0))),
             fontWeight: FontWeight.bold,
             shadows: color == const Color(0xFFFED100)
                 ? []
-                : [const Shadow(color: Colors.black, blurRadius: 4)],
+                : [const Shadow(color: Colors.black, blurRadius: 2)],
           ),
         );
 
@@ -599,12 +624,17 @@ class _EthiopianBingoWheelPainter extends CustomPainter {
           maxLines: 1,
         )..layout();
 
-        // Line 2: Unique ID Badge
         final idSpan = TextSpan(
           text: idStr,
           style: TextStyle(
-            color: (color == const Color(0xFFFED100)) ? Colors.black87 : const Color(0xFFFFD700),
-            fontSize: count > 14 ? 7 : (count > 8 ? 9 : 10),
+            color: (color == const Color(0xFFFED100))
+                ? Colors.black87
+                : const Color(0xFFFFD700),
+            fontSize: count > 80
+                ? 4.8
+                : (count > 50
+                    ? 5.5
+                    : (count > 25 ? 6.5 : (count > 14 ? 7.5 : 9.5))),
             fontWeight: FontWeight.w800,
             shadows: const [Shadow(color: Colors.black87, blurRadius: 2)],
           ),
@@ -616,9 +646,8 @@ class _EthiopianBingoWheelPainter extends CustomPainter {
           maxLines: 1,
         )..layout();
 
-        // Radial offset positioning
         final nameRadius = wheelRadius * 0.70;
-        final idRadius = wheelRadius * 0.48;
+        final idRadius = wheelRadius * 0.44;
 
         namePainter.paint(
           canvas,

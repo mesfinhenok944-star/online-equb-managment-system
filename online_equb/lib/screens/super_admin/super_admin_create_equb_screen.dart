@@ -202,10 +202,9 @@ class _SuperAdminCreateEqubScreenState
                               prefixIcon: Icon(Icons.attach_money),
                             ),
                             validator: (v) {
-                              final count = int.tryParse(v?.trim() ?? '');
-                              return count == null || count < 100
-                                  ? t('Enter at least 100 members',
-                                      'ቢያንስ 100 ተሳታፊዎች ያስገቡ')
+                              final price = double.tryParse(v?.trim() ?? '');
+                              return price == null || price <= 0
+                                  ? t('Enter valid price', 'ትክክለኛ የክፍያ መጠን ያስገቡ')
                                   : null;
                             },
                           ),
@@ -254,12 +253,15 @@ class _SuperAdminCreateEqubScreenState
                             controller: _maxParticipantsController,
                             keyboardType: TextInputType.number,
                             decoration: const InputDecoration(
-                              hintText: '100',
+                              hintText: '1000',
                               prefixIcon: Icon(Icons.group),
                             ),
-                            validator: (v) => v == null || v.trim().isEmpty
-                                ? t('Required', 'ያስፈልጋል')
-                                : null,
+                            validator: (v) {
+                              final count = int.tryParse(v?.trim() ?? '');
+                              return count == null || count < 10
+                                  ? t('Enter at least 10 members', 'ቢያንስ 10 ተሳታፊዎች ያስገቡ')
+                                  : null;
+                            },
                           ),
                         ],
                       ),

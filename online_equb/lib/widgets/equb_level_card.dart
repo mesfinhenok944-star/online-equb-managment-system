@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import '../config/theme.dart';
+import '../screens/equb/equb_history_screen.dart';
+import '../utils/constants.dart';
 
 class EqubLevelCard extends StatelessWidget {
   final Map<String, dynamic> equb;
@@ -138,13 +140,42 @@ class EqubLevelCard extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
+                    // Official Price Range Banner
+                    Container(
+                      width: double.infinity,
+                      margin: const EdgeInsets.only(bottom: 8),
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                      decoration: BoxDecoration(
+                        color: _levelColor.withOpacity(0.12),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: _levelColor.withOpacity(0.3)),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(Icons.payments_outlined, size: 15, color: _levelColor),
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: Text(
+                              AppConstants.getLevelPriceRange(levelKey, isAmharic: AppConstants.currentLanguage == 'am'),
+                              style: TextStyle(
+                                fontSize: 11.5,
+                                fontWeight: FontWeight.bold,
+                                color: _levelColor,
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
                     Text(
                       equb['description'] ?? '',
                       style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                     ),
-                    const SizedBox(height: 12),
+                    const SizedBox(height: 10),
                     Row(
                       children: [
                         _infoChip(Icons.attach_money, '${_fmt(price)} ETB', AppColors.primary),
@@ -152,7 +183,7 @@ class EqubLevelCard extends StatelessWidget {
                         _infoChip(Icons.emoji_events, 'Prize: ${_fmt(prize)} ETB', _levelColor),
                       ],
                     ),
-                    const SizedBox(height: 12),
+                    const SizedBox(height: 10),
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
@@ -174,18 +205,48 @@ class EqubLevelCard extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(height: 12),
-                    SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton.icon(
-                        onPressed: onTap,
-                        icon: const Icon(Icons.visibility, size: 18),
-                        label: const Text('View Details'),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: _levelColor,
-                          minimumSize: const Size(double.infinity, 44),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                    Row(
+                      children: [
+                        Expanded(
+                          flex: 3,
+                          child: ElevatedButton.icon(
+                            onPressed: onTap,
+                            icon: const Icon(Icons.visibility, size: 16),
+                            label: Text(AppConstants.currentLanguage == 'am' ? 'ዝርዝር' : 'Details'),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: _levelColor,
+                              minimumSize: const Size(0, 42),
+                              padding: const EdgeInsets.symmetric(horizontal: 8),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                            ),
+                          ),
                         ),
-                      ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          flex: 2,
+                          child: OutlinedButton.icon(
+                            onPressed: () {
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (_) => EqubHistoryScreen(initialLevel: levelKey),
+                                ),
+                              );
+                            },
+                            icon: Icon(Icons.history_rounded, size: 16, color: _levelColor),
+                            label: Text(
+                              AppConstants.currentLanguage == 'am' ? 'ታሪክ' : 'History',
+                              style: TextStyle(color: _levelColor, fontWeight: FontWeight.bold, fontSize: 12),
+                            ),
+                            style: OutlinedButton.styleFrom(
+                              minimumSize: const Size(0, 42),
+                              padding: const EdgeInsets.symmetric(horizontal: 6),
+                              side: BorderSide(color: _levelColor, width: 1.5),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                   ],
                 ),

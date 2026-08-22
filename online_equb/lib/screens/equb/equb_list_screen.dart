@@ -28,26 +28,27 @@ class _EqubListScreenState extends State<EqubListScreen> {
   Future<void> _load() async {
     setState(() => _loading = true);
     try {
-      // Try Firestore first (realtime/mobile-friendly). If it fails, fall back to ApiService mock/http.
+      List<dynamic> fsEqubs = [];
       try {
-        final fs = await FirestoreService.getEqubs();
-        if (mounted) {
-          setState(() {
-            _equbs = fs;
-            _loading = false;
-          });
-          return;
+        fsEqubs = await FirestoreService.getEqubs();
+      } catch (_) {}
+
+      final apiEqubs = await ApiService.getEqubs();
+
+      final combined = [...fsEqubs];
+      for (final item in apiEqubs) {
+        final key = (item['level'] ?? item['equbId'] ?? item['id'] ?? '').toString();
+        if (!combined.any((e) => (e['level'] ?? e['equbId'] ?? e['id'] ?? '').toString() == key)) {
+          combined.add(item);
         }
-      } catch (_) {
-        // ignore, try ApiService fallback below
       }
 
-      final data = await ApiService.getEqubs();
-      if (mounted)
+      if (mounted) {
         setState(() {
-          _equbs = data;
+          _equbs = combined.isNotEmpty ? combined : apiEqubs;
           _loading = false;
         });
+      }
     } catch (_) {
       if (mounted) setState(() => _loading = false);
     }

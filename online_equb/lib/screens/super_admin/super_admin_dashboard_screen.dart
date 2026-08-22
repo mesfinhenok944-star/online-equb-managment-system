@@ -21,6 +21,7 @@ class _SuperAdminDashboardScreenState
   String _filterLevel = 'all';
   String _filterStatus = 'all';
   bool _isAmharic = false;
+  bool _isTableView = true;
 
   // ── language helpers ──────────────────────────────────────────────────────
   String t(String en, String am) => _isAmharic ? am : en;
@@ -80,6 +81,17 @@ class _SuperAdminDashboardScreenState
     return Scaffold(
       backgroundColor: AppColors.background,
       appBar: AppBar(
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back),
+          onPressed: () {
+            if (Navigator.canPop(context)) {
+              Navigator.pop(context);
+            } else {
+              context.go('/home');
+            }
+          },
+          tooltip: t('Back', 'ተመለስ'),
+        ),
         title: Text(t('Super Admin Dashboard', 'የሱፐር አስተዳዳሪ ዳሽቦርድ')),
         backgroundColor: AppColors.primary,
         foregroundColor: Colors.white,
@@ -101,10 +113,34 @@ class _SuperAdminDashboardScreenState
             onPressed: () => context.push('/super-admin/settings'),
             tooltip: t('Settings', 'ቅንብሮች'),
           ),
-          IconButton(
-            icon: const Icon(Icons.logout),
-            onPressed: _confirmLogout,
-            tooltip: t('Logout', 'ውጣ'),
+          Padding(
+            padding: const EdgeInsets.only(right: 8.0),
+            child: Material(
+              color: Colors.white.withOpacity(0.15),
+              borderRadius: BorderRadius.circular(10),
+              child: InkWell(
+                borderRadius: BorderRadius.circular(10),
+                onTap: _confirmLogout,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.logout_rounded, color: Colors.white, size: 18),
+                      const SizedBox(width: 4),
+                      Text(
+                        t('Logout', 'ውጣ'),
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
           ),
         ],
       ),
@@ -144,30 +180,40 @@ class _SuperAdminDashboardScreenState
                   ),
                   _filtered.isEmpty
                       ? SliverFillRemaining(child: _buildEmptyState())
-                      : SliverPadding(
-                          padding: const EdgeInsets.fromLTRB(16, 0, 16, 100),
-                          sliver: SliverList(
-                            delegate: SliverChildBuilderDelegate(
-                              (_, i) => _AdminCard(
-                                admin: _filtered[i],
-                                isAmharic: _isAmharic,
-                                onEdit: () async {
-                                  await context.push(
-                                    '/super-admin/edit-admin',
-                                    extra: _filtered[i],
-                                  );
-                                  _load();
-                                },
-                                onView: () => _showAdminDetail(_filtered[i]),
-                                onDelete: () =>
-                                    _confirmDelete(_filtered[i]),
-                                onToggleStatus: () =>
-                                    _toggleStatus(_filtered[i]),
+                      : _isTableView
+                          ? SliverToBoxAdapter(
+                              child: Padding(
+                                padding:
+                                    const EdgeInsets.fromLTRB(16, 0, 16, 100),
+                                child: _buildAdminsTable(),
                               ),
-                              childCount: _filtered.length,
+                            )
+                          : SliverPadding(
+                              padding:
+                                  const EdgeInsets.fromLTRB(16, 0, 16, 100),
+                              sliver: SliverList(
+                                delegate: SliverChildBuilderDelegate(
+                                  (_, i) => _AdminCard(
+                                    admin: _filtered[i],
+                                    isAmharic: _isAmharic,
+                                    onEdit: () async {
+                                      await context.push(
+                                        '/super-admin/edit-admin',
+                                        extra: _filtered[i],
+                                      );
+                                      _load();
+                                    },
+                                    onView: () =>
+                                        _showAdminDetail(_filtered[i]),
+                                    onDelete: () =>
+                                        _confirmDelete(_filtered[i]),
+                                    onToggleStatus: () =>
+                                        _toggleStatus(_filtered[i]),
+                                  ),
+                                  childCount: _filtered.length,
+                                ),
+                              ),
                             ),
-                          ),
-                        ),
                 ],
               ),
             ),
@@ -206,8 +252,8 @@ class _SuperAdminDashboardScreenState
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  t('You manage ${_admins.length} admin(s) across all EQUB levels.',
-                      'ለሁሉም የEQUB ደረጃዎች ${_admins.length} አስተዳዳሪ(ዎች) ያስተዳድራሉ።'),
+                  t('System Admin Management Console – Complete CRUD & Assignment Control.',
+                      'የስርዓት አስተዳዳሪዎች መቆጣጠሪያ ኮንሶል – ሙሉ የክሩድ እና የምደባ ቁጥጥር።'),
                   style: const TextStyle(color: Colors.white70, fontSize: 13),
                 ),
               ],
@@ -237,7 +283,7 @@ class _SuperAdminDashboardScreenState
               _load();
             },
             icon: const Icon(Icons.person_add_alt_1),
-            label: Text(t('Assign Admin', 'አስተዳዳሪ መድብ')),
+            label: Text(t('Assign New Admin', 'አዲስ አስተዳዳሪ መድብ')),
             style: ElevatedButton.styleFrom(
               backgroundColor: AppColors.primary,
               foregroundColor: Colors.white,
@@ -248,21 +294,16 @@ class _SuperAdminDashboardScreenState
           ),
         ),
         const SizedBox(width: 12),
-        Expanded(
-          child: ElevatedButton.icon(
-            onPressed: () async {
-              final ok = await context.push('/super-admin/add-equb-level');
-              if (ok == true) _load();
-            },
-            icon: const Icon(Icons.add_business),
-            label: Text(t('Add Equb Level', 'እቁብ ደረጃ መዝግብ')),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.teal.shade700,
-              foregroundColor: Colors.white,
-              padding: const EdgeInsets.symmetric(vertical: 14),
-              shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12)),
-            ),
+        ElevatedButton.icon(
+          onPressed: _load,
+          icon: const Icon(Icons.refresh),
+          label: Text(t('Refresh', 'አድስ')),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: Colors.indigo.shade600,
+            foregroundColor: Colors.white,
+            padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 16),
+            shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12)),
           ),
         ),
       ],
@@ -271,34 +312,56 @@ class _SuperAdminDashboardScreenState
 
   // ── stats row ─────────────────────────────────────────────────────────────
   Widget _buildStatsRow() {
-    return Row(
+    return Column(
       children: [
-        _StatCard(
-          label: t('Total', 'ጠቅላላ'),
-          value: '${_admins.length}',
-          color: AppColors.primary,
-          icon: Icons.people,
+        Row(
+          children: [
+            _StatCard(
+              label: t('Total Admins', 'ጠቅላላ አስተዳዳሪዎች'),
+              value: '${_admins.length}',
+              color: AppColors.primary,
+              icon: Icons.people,
+            ),
+            const SizedBox(width: 8),
+            _StatCard(
+              label: t('Active', 'ንቁ'),
+              value: '${_countByStatus('active')}',
+              color: AppColors.success,
+              icon: Icons.check_circle,
+            ),
+            const SizedBox(width: 8),
+            _StatCard(
+              label: t('Suspended', 'ታግዷል'),
+              value: '${_countByStatus('suspended')}',
+              color: AppColors.warning,
+              icon: Icons.pause_circle,
+            ),
+          ],
         ),
-        const SizedBox(width: 8),
-        _StatCard(
-          label: t('Active', 'ንቁ'),
-          value: '${_countByStatus('active')}',
-          color: AppColors.success,
-          icon: Icons.check_circle,
-        ),
-        const SizedBox(width: 8),
-        _StatCard(
-          label: t('Suspended', 'ታግዷል'),
-          value: '${_countByStatus('suspended')}',
-          color: AppColors.warning,
-          icon: Icons.pause_circle,
-        ),
-        const SizedBox(width: 8),
-        _StatCard(
-          label: t('Low', 'ዝቅተኛ'),
-          value: '${_countByLevel('low')}',
-          color: AppColors.low,
-          icon: Icons.savings,
+        const SizedBox(height: 10),
+        Row(
+          children: [
+            _StatCard(
+              label: t('Low Admins', 'ዝቅተኛ አስተዳዳሪዎች'),
+              value: '${_countByLevel('low')}/3',
+              color: AppColors.low,
+              icon: Icons.shield_outlined,
+            ),
+            const SizedBox(width: 8),
+            _StatCard(
+              label: t('Medium Admins', 'መካከለኛ አስተዳዳሪዎች'),
+              value: '${_countByLevel('medium')}/3',
+              color: AppColors.medium,
+              icon: Icons.shield,
+            ),
+            const SizedBox(width: 8),
+            _StatCard(
+              label: t('High Admins', 'ከፍተኛ አስተዳዳሪዎች'),
+              value: '${_countByLevel('high')}/3',
+              color: AppColors.high,
+              icon: Icons.verified_user,
+            ),
+          ],
         ),
       ],
     );
@@ -380,7 +443,155 @@ class _SuperAdminDashboardScreenState
               selected: _filterStatus == 'suspended',
               color: AppColors.warning,
               onTap: () => setState(() => _filterStatus = 'suspended')),
+          const SizedBox(width: 16),
+          // View Mode Toggle (Table / Card)
+          Container(
+            decoration: BoxDecoration(
+              color: AppColors.primary.withOpacity(0.08),
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                IconButton(
+                  icon: Icon(Icons.table_chart_outlined,
+                      color: _isTableView ? AppColors.primary : Colors.grey, size: 20),
+                  tooltip: t('Table View', 'የሰንጠረዥ እይታ'),
+                  onPressed: () => setState(() => _isTableView = true),
+                ),
+                IconButton(
+                  icon: Icon(Icons.grid_view_outlined,
+                      color: !_isTableView ? AppColors.primary : Colors.grey, size: 20),
+                  tooltip: t('Card View', 'የካርድ እይታ'),
+                  onPressed: () => setState(() => _isTableView = false),
+                ),
+              ],
+            ),
+          ),
         ],
+      ),
+    );
+  }
+
+  // ── admins table ──────────────────────────────────────────────────────────
+  Widget _buildAdminsTable() {
+    return Card(
+      elevation: 3,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(16),
+        child: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: DataTable(
+            headingRowColor: WidgetStateProperty.all(AppColors.primary.withOpacity(0.08)),
+            columns: [
+              DataColumn(label: Text(t('Admin Name', 'የአስተዳዳሪ ስም'), style: const TextStyle(fontWeight: FontWeight.bold))),
+              DataColumn(label: Text(t('Username / Email', 'ተጠቃሚ ስም / ኢሜይል'), style: const TextStyle(fontWeight: FontWeight.bold))),
+              DataColumn(label: Text(t('Phone', 'ስልክ'), style: const TextStyle(fontWeight: FontWeight.bold))),
+              DataColumn(label: Text(t('Assigned Level', 'የተመደበበት ደረጃ'), style: const TextStyle(fontWeight: FontWeight.bold))),
+              DataColumn(label: Text(t('Status', 'ሁኔታ'), style: const TextStyle(fontWeight: FontWeight.bold))),
+              DataColumn(label: Text(t('Actions', 'እርምጃዎች'), style: const TextStyle(fontWeight: FontWeight.bold))),
+            ],
+            rows: _filtered.map((admin) {
+              final name = (admin['fullName'] ?? '${admin['firstName']} ${admin['lastName']}').toString().trim();
+              final username = (admin['username'] ?? '').toString();
+              final email = (admin['email'] ?? '').toString();
+              final phone = (admin['phone'] ?? admin['contactInfo']?['phoneNumber'] ?? '-').toString();
+              final level = (admin['level'] ?? 'low').toString();
+              final status = (admin['status'] ?? 'active').toString();
+              final isActive = status == 'active';
+
+              Color levelColor;
+              switch (level) {
+                case 'medium': levelColor = AppColors.medium; break;
+                case 'high': levelColor = AppColors.high; break;
+                default: levelColor = AppColors.low; break;
+              }
+
+              return DataRow(
+                cells: [
+                  DataCell(
+                    Row(
+                      children: [
+                        CircleAvatar(
+                          radius: 14,
+                          backgroundColor: levelColor.withOpacity(0.2),
+                          child: Icon(Icons.person, size: 16, color: levelColor),
+                        ),
+                        const SizedBox(width: 8),
+                        Text(name.isEmpty ? username : name, style: const TextStyle(fontWeight: FontWeight.w600)),
+                      ],
+                    ),
+                  ),
+                  DataCell(Text('$username\n$email', style: const TextStyle(fontSize: 12))),
+                  DataCell(Text(phone, style: const TextStyle(fontSize: 12))),
+                  DataCell(
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: levelColor.withOpacity(0.15),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: levelColor.withOpacity(0.3)),
+                      ),
+                      child: Text(
+                        level.toUpperCase(),
+                        style: TextStyle(color: levelColor, fontWeight: FontWeight.bold, fontSize: 11),
+                      ),
+                    ),
+                  ),
+                  DataCell(
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: (isActive ? AppColors.success : AppColors.warning).withOpacity(0.15),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Text(
+                        isActive ? t('ACTIVE', 'ንቁ') : t('SUSPENDED', 'ታግዷል'),
+                        style: TextStyle(
+                          color: isActive ? AppColors.success : AppColors.warning,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 11,
+                        ),
+                      ),
+                    ),
+                  ),
+                  DataCell(
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        IconButton(
+                          icon: const Icon(Icons.visibility, color: AppColors.primary, size: 20),
+                          tooltip: t('View Details', 'ዝርዝር ይመልከቱ'),
+                          onPressed: () => _showAdminDetail(admin),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.edit, color: Colors.blue, size: 20),
+                          tooltip: t('Edit Admin', 'አርትዕ'),
+                          onPressed: () async {
+                            await context.push('/super-admin/edit-admin', extra: admin);
+                            _load();
+                          },
+                        ),
+                        IconButton(
+                          icon: Icon(isActive ? Icons.pause_circle_outline : Icons.play_circle_outline,
+                              color: isActive ? AppColors.warning : AppColors.success, size: 20),
+                          tooltip: isActive ? t('Suspend', 'ታግድ') : t('Activate', 'አንቃ'),
+                          onPressed: () => _toggleStatus(admin),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.delete_outline, color: AppColors.error, size: 20),
+                          tooltip: t('Delete Admin', 'ሰርዝ'),
+                          onPressed: () => _confirmDelete(admin),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              );
+            }).toList(),
+          ),
+        ),
       ),
     );
   }

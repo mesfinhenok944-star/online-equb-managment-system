@@ -12,6 +12,7 @@ const fs    = require('fs');
 // ─────────────────────────────────────────────────────────────────────────────
 
 let app;
+let keyFilePath;
 const useRealFirebase = process.env.FIREBASE_USE_REAL === 'true';
 
 function initFirebase() {
@@ -20,18 +21,22 @@ function initFirebase() {
     return;
   }
 
-  const keyFilePath = process.env.GOOGLE_APPLICATION_CREDENTIALS
-    ? path.resolve(process.env.GOOGLE_APPLICATION_CREDENTIALS)
-    : null;
+  const possibleKeyPaths = [
+    process.env.GOOGLE_APPLICATION_CREDENTIALS ? path.resolve(process.env.GOOGLE_APPLICATION_CREDENTIALS) : null,
+    path.resolve(process.cwd(), 'serviceAccountKey.json'),
+    path.resolve(__dirname, '../../serviceAccountKey.json'),
+  ].filter(Boolean);
+
+  keyFilePath = possibleKeyPaths.find(p => fs.existsSync(p));
 
   try {
-    if (useRealFirebase && keyFilePath && fs.existsSync(keyFilePath)) {
+    if (keyFilePath) {
       // Strategy 1 — JSON service account file
       const serviceAccount = JSON.parse(fs.readFileSync(keyFilePath, 'utf8'));
       app = admin.initializeApp({
         credential: admin.credential.cert(serviceAccount),
       });
-      console.log('[Firebase] Initialised with service account file.');
+      console.log(`[Firebase] Initialised with service account file: ${keyFilePath}`);
       return;
     }
 
@@ -124,7 +129,17 @@ class MemoryQuery {
       const { field, op, val } = filter;
       items = items.filter((item) => {
         const d = item.data();
-        const itemVal = d[field];
+        let itemVal = d[field];
+
+        // Fallback for user level / equbLevel matching
+        if (itemVal === undefined && (field === 'equbLevel' || field === 'level')) {
+          itemVal = d[field === 'equbLevel' ? 'level' : 'equbLevel'];
+        }
+        // Fallback for nationalId / uniqueId matching
+        if (itemVal === undefined && (field === 'nationalId' || field === 'uniqueId')) {
+          itemVal = d[field === 'nationalId' ? 'uniqueId' : 'nationalId'];
+        }
+
         if (op === '==') return itemVal === val;
         if (op === '!=') return itemVal !== val;
         if (op === '>=') return itemVal >= val;
@@ -158,10 +173,19 @@ class MemoryQuery {
   }
 }
 
+const DB_STORE_PATH = path.resolve(__dirname, '../../data/db_store.json');
+
 class MemoryCollection {
-  constructor(name) {
+  constructor(name, dbInstance) {
     this.name = name;
+    this.dbInstance = dbInstance;
     this.docs = new Map();
+  }
+
+  _save() {
+    if (this.dbInstance && typeof this.dbInstance.saveToDisk === 'function') {
+      this.dbInstance.saveToDisk();
+    }
   }
 
   doc(id) {
@@ -200,6 +224,7 @@ class MemoryCollection {
     } else {
       this.docs.set(id, { ...data });
     }
+    this._save();
     return Promise.resolve();
   }
 
@@ -209,11 +234,13 @@ class MemoryCollection {
     } else {
       this.docs.set(id, { ...data });
     }
+    this._save();
     return Promise.resolve();
   }
 
   _deleteDoc(id) {
     this.docs.delete(id);
+    this._save();
     return Promise.resolve();
   }
 
@@ -237,11 +264,44 @@ class MemoryCollection {
 class MemoryDb {
   constructor() {
     this.collections = new Map();
+    this._loadFromDisk();
+  }
+
+  _loadFromDisk() {
+    try {
+      if (fs.existsSync(DB_STORE_PATH)) {
+        const raw = fs.readFileSync(DB_STORE_PATH, 'utf8');
+        const json = JSON.parse(raw);
+        for (const [colName, docsObj] of Object.entries(json)) {
+          const col = this.collection(colName);
+          for (const [docId, data] of Object.entries(docsObj)) {
+            col.docs.set(docId, data);
+          }
+        }
+        console.log('[MemoryDb] Loaded persistent store from disk:', DB_STORE_PATH);
+      }
+    } catch (err) {
+      console.warn('[MemoryDb] Error loading persistent store:', err.message);
+    }
+  }
+
+  saveToDisk() {
+    try {
+      const dir = path.dirname(DB_STORE_PATH);
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      const storeObj = {};
+      for (const [colName, col] of this.collections.entries()) {
+        storeObj[colName] = Object.fromEntries(col.docs.entries());
+      }
+      fs.writeFileSync(DB_STORE_PATH, JSON.stringify(storeObj, null, 2), 'utf8');
+    } catch (err) {
+      console.warn('[MemoryDb] Error saving store to disk:', err.message);
+    }
   }
 
   collection(name) {
     if (!this.collections.has(name)) {
-      this.collections.set(name, new MemoryCollection(name));
+      this.collections.set(name, new MemoryCollection(name, this));
     }
     return this.collections.get(name);
   }
@@ -251,26 +311,21 @@ let db, auth;
 let isRealFirebase = false;
 
 try {
-  const keyFilePath = process.env.GOOGLE_APPLICATION_CREDENTIALS
-    ? path.resolve(process.env.GOOGLE_APPLICATION_CREDENTIALS)
-    : null;
-
-  const projectId   = process.env.FIREBASE_PROJECT_ID;
-  const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
-  const privateKey  = (process.env.FIREBASE_PRIVATE_KEY || '').replace(/\\n/g, '\n');
-
-  const inlineCredentialsLookReal =
-    useRealFirebase &&
-    projectId && clientEmail && privateKey.includes('BEGIN PRIVATE KEY');
-  if ((useRealFirebase && keyFilePath && fs.existsSync(keyFilePath)) || inlineCredentialsLookReal) {
+  if (keyFilePath && fs.existsSync(keyFilePath)) {
     db = admin.firestore();
     auth = admin.auth();
     isRealFirebase = true;
+    console.log('[Firebase] Successfully connected to Live Google Cloud Firestore (online-equb-managment-system).');
+  } else if (admin.apps.length > 0 && admin.apps[0].options.credential) {
+    db = admin.firestore();
+    auth = admin.auth();
+    isRealFirebase = true;
+    console.log('[Firebase] Successfully connected to Live Google Cloud Firestore.');
   } else {
     throw new Error('Using MemoryDb fallback');
   }
-} catch (_) {
-  console.log('[Firebase] Running in standalone MemoryStore mode.');
+} catch (e) {
+  console.log('[Firebase] Running in standalone MemoryStore mode.', e.message);
   db = new MemoryDb();
   auth = {
     createUser: async (opts) => ({ uid: `usr_${Date.now()}`, ...opts }),

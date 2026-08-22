@@ -21,20 +21,22 @@ router.post('/draw', async (req, res) => {
     const adminId = req.user?.adminId || '';
 
     // Get all active users who haven't won yet for this level
-    const usersSnapshot = await db.collection('users')
-      .where('level', '==', adminLevel)
-      .where('status', '==', 'active')
-      .where('hasWon', '==', false)
-      .get();
+    const usersSnapshot = await db.collection('users').get();
+    const eligibleDocs = usersSnapshot.docs.filter(doc => {
+      const d = doc.data();
+      return (d.level === adminLevel || d.equbLevel === adminLevel) &&
+             d.status === 'active' &&
+             d.hasWon !== true;
+    });
 
-    if (usersSnapshot.empty) {
+    if (eligibleDocs.length === 0) {
       return res.status(400).json({
         error: 'No eligible participants available for this draw'
       });
     }
 
     // Get participant list
-    const participants = usersSnapshot.docs.map(doc => ({
+    const participants = eligibleDocs.map(doc => ({
       userId: doc.id,
       ...doc.data()
     }));
@@ -80,16 +82,12 @@ router.post('/draw', async (req, res) => {
     });
 
     // Get recent draw history
-    const historySnapshot = await db.collection('draws')
-      .where('level', '==', adminLevel)
-      .orderBy('createdAt', 'desc')
-      .limit(10)
-      .get();
-
-    const history = historySnapshot.docs.map(doc => ({
-      drawId: doc.id,
-      ...doc.data()
-    }));
+    const drawsSnap = await db.collection('draws').get();
+    const history = drawsSnap.docs
+      .filter(doc => (doc.data().level === adminLevel || doc.data().equbLevel === adminLevel))
+      .map(doc => ({ drawId: doc.id, ...doc.data() }))
+      .sort((a, b) => (b.createdAt || '').toString().localeCompare((a.createdAt || '').toString()))
+      .slice(0, 10);
 
     return res.status(200).json({
       message: 'Draw completed successfully',
@@ -122,16 +120,12 @@ router.get('/draws', async (req, res) => {
     const adminLevel = req.user?.level || 'low';
     const { limit = 10 } = req.query;
 
-    const snapshot = await db.collection('draws')
-      .where('level', '==', adminLevel)
-      .orderBy('createdAt', 'desc')
-      .limit(parseInt(limit))
-      .get();
-
-    const draws = snapshot.docs.map(doc => ({
-      drawId: doc.id,
-      ...doc.data()
-    }));
+    const snapshot = await db.collection('draws').get();
+    const draws = snapshot.docs
+      .filter(doc => (doc.data().level === adminLevel || doc.data().equbLevel === adminLevel))
+      .map(doc => ({ drawId: doc.id, ...doc.data() }))
+      .sort((a, b) => (b.createdAt || '').toString().localeCompare((a.createdAt || '').toString()))
+      .slice(0, parseInt(limit));
 
     return res.status(200).json({
       data: draws,
@@ -151,16 +145,11 @@ router.get('/winners', async (req, res) => {
   try {
     const adminLevel = req.user?.level || 'low';
 
-    const snapshot = await db.collection('users')
-      .where('level', '==', adminLevel)
-      .where('hasWon', '==', true)
-      .orderBy('lastWinDate', 'desc')
-      .get();
-
-    const winners = snapshot.docs.map(doc => ({
-      userId: doc.id,
-      ...doc.data()
-    }));
+    const snapshot = await db.collection('users').get();
+    const winners = snapshot.docs
+      .filter(doc => (doc.data().level === adminLevel || doc.data().equbLevel === adminLevel) && doc.data().hasWon === true)
+      .map(doc => ({ userId: doc.id, ...doc.data() }))
+      .sort((a, b) => (b.lastWinDate || '').toString().localeCompare((a.lastWinDate || '').toString()));
 
     return res.status(200).json({
       data: winners,
@@ -180,16 +169,13 @@ router.get('/stats', async (req, res) => {
   try {
     const adminLevel = req.user?.level || 'low';
 
-    const usersSnapshot = await db.collection('users')
-      .where('level', '==', adminLevel)
-      .where('status', '!=', 'deleted')
-      .get();
+    const usersSnapshot = await db.collection('users').get();
+    const drawsSnapshot = await db.collection('draws').get();
 
-    const drawsSnapshot = await db.collection('draws')
-      .where('level', '==', adminLevel)
-      .get();
+    const users = usersSnapshot.docs
+      .filter(d => (d.data().level === adminLevel || d.data().equbLevel === adminLevel) && d.data().status !== 'deleted')
+      .map(d => d.data());
 
-    const users = usersSnapshot.docs.map(d => d.data());
     const activeUsers = users.filter(u => u.status === 'active').length;
     const totalWinners = users.filter(u => u.hasWon === true).length;
     const pendingDraws = users.filter(u => u.hasWon === false).length;
@@ -200,7 +186,7 @@ router.get('/stats', async (req, res) => {
         totalUsers: users.length,
         activeUsers,
         suspendedUsers: users.filter(u => u.status === 'suspended').length,
-        totalDraws: drawsSnapshot.size,
+        totalDraws: drawsSnapshot.docs.filter(d => (d.data().level === adminLevel || d.data().equbLevel === adminLevel)).length,
         totalWinners,
         pendingDraws,
         allWon: pendingDraws === 0

@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 import '../../config/theme.dart';
 import '../../services/api_service.dart';
 import '../../services/role_management_service.dart';
+import '../../widgets/smart_back_button.dart';
 
 /// Used for both CREATE (editData == null) and EDIT (editData != null) modes.
 /// Route extra: Map<String,dynamic>? adminData
@@ -128,18 +129,21 @@ class _SuperAdminAdminFormScreenState extends State<SuperAdminAdminFormScreen> {
 
     bool ok;
     String? errorMsg;
+    String? successMsg;
 
     if (_isEdit) {
       ok = await RoleManagementService.updateAdmin(
-          (widget.editData?['adminId'] ?? '').toString(), payload);
+          (widget.editData?['adminId'] ?? widget.editData?['id'] ?? '').toString(), payload);
       errorMsg = t('Failed to update admin.', 'አስተዳዳሪ ሊሻሻል አልቻለም።');
+      successMsg = t('Admin updated successfully.', 'አስተዳዳሪ ተሻሽሏል።');
     } else {
-      final id = await RoleManagementService.createAdmin(payload);
-      ok = id != null;
-      errorMsg = t(
-        'Failed: email or username already exists.',
-        'ኢሜይል ወይም ተጠቃሚ ስም ቀድሞ አለ።',
-      );
+      final res = await RoleManagementService.createAdminResult(payload);
+      ok = res['success'] == true;
+      if (ok) {
+        successMsg = res['message'] ?? t('Admin assigned successfully.', 'አስተዳዳሪ ተመድቧል።');
+      } else {
+        errorMsg = res['error'] ?? t('Failed to assign admin.', 'አስተዳዳሪውን መመደብ አልተቻለም።');
+      }
     }
 
     setState(() => _saving = false);
@@ -147,15 +151,13 @@ class _SuperAdminAdminFormScreenState extends State<SuperAdminAdminFormScreen> {
 
     if (ok) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(_isEdit
-            ? t('Admin updated successfully.', 'አስተዳዳሪ ተሻሽሏል።')
-            : t('Admin assigned successfully.', 'አስተዳዳሪ ተመድቧል።')),
+        content: Text(successMsg ?? t('Admin saved successfully.', 'አስተዳዳሪው በተሳካ ሁኔታ ተስቀምጧል።')),
         backgroundColor: AppColors.success,
       ));
       context.pop();
     } else {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(errorMsg ?? ''),
+        content: Text(errorMsg ?? t('Failed to process request.', 'ጥያቄውን ማከናወን አልተቻለም።')),
         backgroundColor: AppColors.error,
       ));
     }
@@ -171,10 +173,7 @@ class _SuperAdminAdminFormScreenState extends State<SuperAdminAdminFormScreen> {
             : t('Assign Admin', 'አስተዳዳሪ መድብ')),
         backgroundColor: AppColors.primary,
         foregroundColor: Colors.white,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back),
-          onPressed: () => context.pop(),
-        ),
+        leading: const SmartBackButton(color: Colors.white),
         actions: [
           IconButton(
             icon: Text(
