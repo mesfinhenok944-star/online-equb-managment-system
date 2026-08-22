@@ -12,3 +12,4 @@ A modern, full-stack Online Equb management platform featuring a Flutter mobile 
 ## Project Structure
 - `online_equb/`: Flutter mobile application.
 - `online_equb/backend/`: Node.js backend server.
+# online-equb-managment-system-app
