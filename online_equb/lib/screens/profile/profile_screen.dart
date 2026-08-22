@@ -121,10 +121,23 @@ class _ProfileScreenState extends State<ProfileScreen> {
           width: 90,
           height: 90,
           decoration: BoxDecoration(
-            color: AppColors.primary.withOpacity(0.12),
-            shape: BoxShape.circle,
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(22),
+            boxShadow: [
+              BoxShadow(
+                color: AppColors.primary.withOpacity(0.2),
+                blurRadius: 12,
+                offset: const Offset(0, 4),
+              ),
+            ],
           ),
-          child: const Icon(Icons.person_outline, size: 54, color: AppColors.primary),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(22),
+            child: Image.asset(
+              'assets/images/app_icon.png',
+              fit: BoxFit.cover,
+            ),
+          ),
         ),
         const SizedBox(height: 16),
         Text(

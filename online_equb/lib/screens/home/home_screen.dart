@@ -216,14 +216,27 @@ class _HomeScreenState extends State<HomeScreen> {
                                   Row(
                                     children: [
                                       Container(
-                                        padding: const EdgeInsets.all(8),
+                                        width: 44,
+                                        height: 44,
                                         decoration: BoxDecoration(
-                                          color: Colors.white24,
+                                          color: Colors.white,
                                           borderRadius:
                                               BorderRadius.circular(12),
+                                          boxShadow: const [
+                                            BoxShadow(
+                                              color: Colors.black12,
+                                              blurRadius: 4,
+                                            ),
+                                          ],
                                         ),
-                                        child: const Icon(Icons.casino,
-                                            color: Colors.white, size: 28),
+                                        child: ClipRRect(
+                                          borderRadius:
+                                              BorderRadius.circular(12),
+                                          child: Image.asset(
+                                            'assets/images/app_icon.png',
+                                            fit: BoxFit.cover,
+                                          ),
+                                        ),
                                       ),
                                       const SizedBox(width: 12),
                                       Expanded(

@@ -73,24 +73,28 @@ class _LoginScreenState extends State<LoginScreen> {
                 // Branding Logo & Title
                 Center(
                   child: Container(
-                    width: 76,
-                    height: 76,
+                    width: 84,
+                    height: 84,
                     decoration: BoxDecoration(
-                      gradient: const LinearGradient(
-                        colors: [AppColors.primary, AppColors.primaryDark],
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                      ),
+                      color: Colors.white,
                       borderRadius: BorderRadius.circular(22),
                       boxShadow: [
                         BoxShadow(
-                          color: AppColors.primary.withOpacity(0.3),
-                          blurRadius: 12,
-                          offset: const Offset(0, 4),
+                          color: AppColors.primary.withOpacity(0.2),
+                          blurRadius: 14,
+                          offset: const Offset(0, 5),
                         ),
                       ],
                     ),
-                    child: const Icon(Icons.savings, color: Colors.white, size: 42),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(22),
+                      child: Image.asset(
+                        'assets/images/app_icon.png',
+                        width: 84,
+                        height: 84,
+                        fit: BoxFit.cover,
+                      ),
+                    ),
                   ),
                 ),
                 const SizedBox(height: 16),
