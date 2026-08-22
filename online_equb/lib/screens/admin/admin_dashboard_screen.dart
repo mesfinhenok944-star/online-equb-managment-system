@@ -45,7 +45,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     // Fallback: use auth user data
     adminProfile ??= user ?? {};
 
-    final level = (adminProfile['level'] ?? 'low').toString();
+    final level = (adminProfile['level'] ?? adminProfile['assignedLevel'] ?? adminProfile['equbLevel'] ?? adminProfile['levelId'] ?? 'low').toString().toLowerCase();
 
     // Load users for this level
     final users = await RoleManagementService.getUsersByLevel(level);
@@ -53,13 +53,13 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
 
     if (!mounted) return;
     setState(() {
-      _adminProfile = {...adminProfile!, 'drawHistory': history};
+      _adminProfile = {...adminProfile!, 'level': level, 'drawHistory': history};
       _usersByLevel = {level: users};
       _loading = false;
     });
   }
 
-  String get _assignedLevel => (_adminProfile?['level'] ?? 'low').toString();
+  String get _assignedLevel => (_adminProfile?['level'] ?? _adminProfile?['assignedLevel'] ?? 'low').toString().toLowerCase();
 
   Color get _levelColor {
     switch (_assignedLevel) {
