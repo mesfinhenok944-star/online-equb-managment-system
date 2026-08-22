@@ -794,6 +794,21 @@ class RoleManagementService {
     return cleanList;
   }
 
+  /// Get draw history for all levels combined (used for Home screen overview).
+  static Future<List<Map<String, dynamic>>> getAllDrawHistory() async {
+    final List<Map<String, dynamic>> result = [];
+    for (final lvl in ['low', 'medium', 'high']) {
+      final list = await getDrawHistory(lvl);
+      result.addAll(list);
+    }
+    result.sort((a, b) {
+      final aTime = a['createdAt']?.toString() ?? '';
+      final bTime = b['createdAt']?.toString() ?? '';
+      return bTime.compareTo(aTime);
+    });
+    return result;
+  }
+
   // ──────────────────────────────── HELPERS ────────────────────────────────
 
   static Map<String, dynamic> _defaultPermissions(String level) {
