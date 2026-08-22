@@ -6,7 +6,6 @@ import '../../providers/auth_provider.dart';
 import '../../services/api_service.dart';
 import '../../services/firestore_service.dart';
 import '../../utils/constants.dart';
-import '../../services/role_management_service.dart';
 import '../equb/equb_history_screen.dart';
 import '../payment/payment_screen.dart';
 
