@@ -8,6 +8,7 @@ import '../../services/firestore_service.dart';
 import '../../utils/constants.dart';
 import '../../services/role_management_service.dart';
 import '../equb/equb_history_screen.dart';
+import '../payment/payment_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -919,19 +920,43 @@ class _HomeScreenState extends State<HomeScreen> {
                       ? 'አሸናፊው በቀጥታ በመንኮራኩሩ (Spin Wheel) ይመረጣል፤ ስም እና መታወቂያ በመንኮራኩሩ ላይ ይዞራሉ።'
                       : 'Draws are conducted live using an interactive Wheel of Fortune with dynamic participant segments.',
                 ),
-                _buildRuleItem(
-                  Icons.block,
-                  isAmharic
-                      ? 'አንድ ጊዜ ብቻ ማሸነፍ'
-                      : 'No Repeat Winners in Same Cycle',
-                  isAmharic
-                      ? 'አንድ ጊዜ ያሸነፈ አባል እስከ ዙሩ መጨረሻ ድረስ ከሚቀጥሉት እጣዎች ይገለላል፤ በታሪክ ውስጥ ይመዘገባል።'
-                      : 'Once a user wins, they are placed in winner history and excluded from future spins until full cycle resets.',
-                ),
 
                 const SizedBox(height: 24),
 
                 // Action Buttons
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    onPressed: () {
+                      Navigator.pop(ctx);
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => PaymentScreen(
+                            initialLevel: (info['level'] ?? 'low').toString(),
+                          ),
+                        ),
+                      );
+                    },
+                    icon: const Icon(Icons.payments_rounded, color: Colors.white),
+                    label: Text(
+                      isAmharic ? '💳 ክፍያ ይፈጽሙ / ደረሰኝ ያያይዙ' : '💳 Pay Contribution / Submit Receipt',
+                      style: const TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.white,
+                      ),
+                    ),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.green.shade700,
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 8),
                 SizedBox(
                   width: double.infinity,
                   child: ElevatedButton(

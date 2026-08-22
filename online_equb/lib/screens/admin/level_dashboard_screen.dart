@@ -9,6 +9,7 @@ import '../../services/sound_service.dart';
 import '../../utils/constants.dart';
 import '../../widgets/equb_draw_wheel.dart';
 import 'admin_register_user_screen.dart';
+import 'level_admin_payment_verification_screen.dart';
 
 /// Full level-specific dashboard for the assigned admin.
 /// Handles: user list (Firestore), CRUD (add/edit/delete/suspend),
@@ -240,6 +241,18 @@ class _LevelDashboardScreenState extends State<LevelDashboardScreen>
         ),
         actions: [
           IconButton(
+            icon: const Icon(Icons.payments_rounded, color: Colors.amber),
+            tooltip: t('Verify Payments', 'ክፍያዎችን አረጋግጥ'),
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => LevelAdminPaymentVerificationScreen(level: widget.level),
+                ),
+              );
+            },
+          ),
+          IconButton(
             icon: Text(
               _isAmharic ? 'EN' : 'አማ',
               style: const TextStyle(
@@ -431,6 +444,31 @@ class _LevelDashboardScreenState extends State<LevelDashboardScreen>
                     fontSize: 12,
                     color: AppColors.textPrimary,
                     height: 1.3,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: ElevatedButton.icon(
+                    onPressed: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => LevelAdminPaymentVerificationScreen(level: widget.level),
+                        ),
+                      );
+                    },
+                    icon: const Icon(Icons.verified, size: 16),
+                    label: Text(
+                      t('Verify Member Payments', 'የአባላትን ክፍያ አረጋግጥ'),
+                      style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold),
+                    ),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: accentColor,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                    ),
                   ),
                 ),
               ],

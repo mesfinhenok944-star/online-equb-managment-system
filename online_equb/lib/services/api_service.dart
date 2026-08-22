@@ -528,11 +528,11 @@ class ApiService {
   // PAYMENTS
   // ══════════════════════════════════════════════════════════════════════════
 
-  static Future<Map<String, dynamic>> initiatePayment(
+  static Future<Map<String, dynamic>> submitEqubPayment(
       Map<String, dynamic> data) async {
     try {
       final res = await _client.post(
-        Uri.parse('$_base/payments/initiate'),
+        Uri.parse('$_base/payments/submit'),
         headers: await _headers(),
         body: jsonEncode(data),
       );
@@ -540,6 +540,37 @@ class ApiService {
     } catch (e) {
       return {'error': '$e'};
     }
+  }
+
+  static Future<List<dynamic>> getPaymentsByLevel(String level) async {
+    try {
+      final res = await _client.get(
+        Uri.parse('$_base/payments/level/$level'),
+        headers: await _headers(),
+      );
+      return _decodeList(res);
+    } catch (_) {
+      return [];
+    }
+  }
+
+  static Future<Map<String, dynamic>> verifyPayment(
+      Map<String, dynamic> data) async {
+    try {
+      final res = await _client.post(
+        Uri.parse('$_base/payments/verify'),
+        headers: await _headers(),
+        body: jsonEncode(data),
+      );
+      return _decode(res);
+    } catch (e) {
+      return {'error': '$e'};
+    }
+  }
+
+  static Future<Map<String, dynamic>> initiatePayment(
+      Map<String, dynamic> data) async {
+    return submitEqubPayment(data);
   }
 
   static Future<List<dynamic>> getPaymentHistory({String? userId}) async {

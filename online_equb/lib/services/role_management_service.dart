@@ -855,4 +855,129 @@ class RoleManagementService {
     } catch (_) {}
     return null;
   }
+
+  // ──────────────────────────────── PAYMENTS ───────────────────────────────
+
+  /// Submit a payment form with user verification & proof screenshot.
+  static Future<Map<String, dynamic>> submitPayment(Map<String, dynamic> data) async {
+    try {
+      final res = await ApiService.submitEqubPayment(data);
+      if (res['success'] == true || res['paymentId'] != null) {
+        return res;
+      }
+    } catch (_) {}
+
+    // Direct Firestore SDK fallback
+    try {
+      final db = _maybeDb;
+      if (db != null) {
+        final email = (data['email'] ?? '').toString().trim().toLowerCase();
+        final nationalId = (data['nationalId'] ?? '').toString().trim();
+        final level = (data['equbLevel'] ?? 'low').toString().toLowerCase().replaceAll('equb_', '').trim();
+        final now = DateTime.now().toIso8601String();
+
+        final ref = await db.collection('payments').add({
+          ...data,
+          'email': email,
+          'nationalId': nationalId,
+          'equbLevel': level,
+          'status': 'pending_verification',
+          'verificationSecurityStatus': 'authenticated_real_proof',
+          'createdAt': now,
+          'updatedAt': now,
+        });
+
+        return {
+          'success': true,
+          'paymentId': ref.id,
+          'message': 'Payment submitted successfully! Waiting for Level Admin verification.',
+        };
+      }
+    } catch (e) {
+      debugPrint('[submitPayment error] $e');
+    }
+
+    return {'success': false, 'error': 'Failed to submit payment.'};
+  }
+
+  /// Get payments filtered by level (low, medium, high, all).
+  static Future<List<Map<String, dynamic>>> getPaymentsByLevel(String level) async {
+    final targetLevel = level.toLowerCase().replaceAll('equb_', '').trim();
+    try {
+      final db = _maybeDb;
+      if (db != null) {
+        final snap = await db.collection('payments').get();
+        final list = snap.docs
+            .map((d) => <String, dynamic>{'paymentId': d.id, 'id': d.id, ...d.data()})
+            .where((item) {
+              if (targetLevel == 'all') return true;
+              final pLvl = (item['equbLevel'] ?? item['level'] ?? '').toString().toLowerCase().replaceAll('equb_', '').trim();
+              return pLvl == targetLevel;
+            })
+            .toList();
+
+        list.sort((a, b) => (b['createdAt'] ?? '').toString().compareTo((a['createdAt'] ?? '').toString()));
+        if (list.isNotEmpty) return list;
+      }
+    } catch (e) {
+      debugPrint('[getPaymentsByLevel error] $e');
+    }
+
+    final apiRes = await ApiService.getPaymentsByLevel(targetLevel);
+    return apiRes.map((item) => Map<String, dynamic>.from(item as Map)).toList();
+  }
+
+  /// Verify or reject a payment transaction.
+  static Future<bool> verifyPayment({
+    required String paymentId,
+    required String status,
+    String rejectionReason = '',
+    String adminId = 'admin',
+  }) async {
+    try {
+      final db = _maybeDb;
+      if (db != null) {
+        final docRef = db.collection('payments').doc(paymentId);
+        final snap = await docRef.get();
+        if (snap.exists) {
+          final pay = snap.data()!;
+          await docRef.update({
+            'status': status,
+            'rejectionReason': rejectionReason,
+            'verifiedByAdminId': adminId,
+            'verifiedAt': DateTime.now().toIso8601String(),
+            'updatedAt': DateTime.now().toIso8601String(),
+          });
+
+          if (status == 'verified' && pay['userId'] != null && !pay['userId'].toString().startsWith('guest_')) {
+            try {
+              final userRef = db.collection('users').doc(pay['userId'].toString());
+              final uSnap = await userRef.get();
+              if (uSnap.exists) {
+                final currentBal = (uSnap.data()?['balance'] ?? 0) as num;
+                final payAmt = (pay['amount'] ?? 0) as num;
+                await userRef.update({
+                  'hasPaid': true,
+                  'status': 'active',
+                  'balance': currentBal + payAmt,
+                  'lastPaymentDate': DateTime.now().toIso8601String(),
+                });
+              }
+            } catch (_) {}
+          }
+          return true;
+        }
+      }
+    } catch (e) {
+      debugPrint('[verifyPayment error] $e');
+    }
+
+    final res = await ApiService.verifyPayment({
+      'paymentId': paymentId,
+      'status': status,
+      'rejectionReason': rejectionReason,
+      'adminId': adminId,
+    });
+    return res['success'] == true;
+  }
 }
