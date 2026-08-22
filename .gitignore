@@ -1,7 +1,18 @@
-# Ignore Firebase service account key secrets
+# Secrets & Credentials
 serviceAccountKey.json
 **/serviceAccountKey.json
 *.pem
 *.key
 .env
+
+# IDE & OS files
+.idea/
+*.iml
+*.ipr
+*.iws
+.DS_Store
+
+# Dependencies & Build outputs
 **/node_modules/
+.dart_tool/
+build/
