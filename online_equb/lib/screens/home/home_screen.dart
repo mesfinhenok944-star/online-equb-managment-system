@@ -7,6 +7,7 @@ import '../../services/api_service.dart';
 import '../../services/firestore_service.dart';
 import '../../utils/constants.dart';
 import '../../services/role_management_service.dart';
+import '../equb/equb_history_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
