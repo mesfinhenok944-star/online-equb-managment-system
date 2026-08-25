@@ -150,47 +150,43 @@ class RoleManagementService {
     final List<Map<String, dynamic>> results = [];
     final Set<String> seenIds = {};
 
-    // 1. REST API (primary)
-    bool apiLoaded = false;
+    // 1. Firestore FIRST (works on real phone, no server needed)
+    bool fsLoaded = false;
     try {
-      final list = await ApiService.superAdminGetAdmins(level: level);
-      for (final item in list) {
-        final m = Map<String, dynamic>.from(item as Map);
-        final id = (m['adminId'] ?? m['id'] ?? '').toString();
-        if (id.isNotEmpty && !seenIds.contains(id)) {
-          results.add(m);
-          seenIds.add(id);
-          if (m['email'] != null) seenIds.add(m['email'].toString().toLowerCase());
-        }
-      }
-      apiLoaded = results.isNotEmpty;
-    } catch (_) {}
-
-    // 2. Firestore SDK (when API unavailable)
-    if (!apiLoaded) {
-      try {
-        final db = _maybeDb;
-        if (db != null) {
-          final snap = await db.collection('admins').get();
-          for (final doc in snap.docs) {
-            final data = doc.data();
-            if ((data['status'] ?? 'active') == 'deleted') continue;
-            final aLvl = (data['level'] ?? data['equbLevel'] ?? 'low')
-                .toString()
-                .toLowerCase();
-            if (level == null ||
-                level == 'all' ||
-                aLvl == level.toLowerCase()) {
-              final item = <String, dynamic>{
-                ...data,
-                'adminId': doc.id,
-                'id': doc.id,
-              };
-              if (!seenIds.contains(doc.id)) {
-                results.add(item);
-                seenIds.add(doc.id);
-              }
+      final db = _maybeDb;
+      if (db != null) {
+        Query<Map<String, dynamic>> q = db.collection('admins');
+        final snap = await q.get().timeout(const Duration(seconds: 8));
+        for (final doc in snap.docs) {
+          final data = doc.data();
+          if ((data['status'] ?? 'active') == 'deleted') continue;
+          final aLvl = (data['level'] ?? data['equbLevel'] ?? data['assignedLevel'] ?? 'low')
+              .toString().toLowerCase().replaceAll('equb_', '');
+          if (level == null || level == 'all' || aLvl == level.toLowerCase()) {
+            final item = <String, dynamic>{...data, 'adminId': doc.id, 'id': doc.id};
+            if (!seenIds.contains(doc.id)) {
+              results.add(item);
+              seenIds.add(doc.id);
             }
+          }
+        }
+        fsLoaded = results.isNotEmpty;
+        debugPrint('[getAdmins] Firestore loaded ${results.length} admins');
+      }
+    } catch (e) {
+      debugPrint('[getAdmins] Firestore error: $e');
+    }
+
+    // 2. REST API (when Firestore unavailable — Linux desktop with server)
+    if (!fsLoaded) {
+      try {
+        final list = await ApiService.superAdminGetAdmins(level: level);
+        for (final item in list) {
+          final m = Map<String, dynamic>.from(item as Map);
+          final id = (m['adminId'] ?? m['id'] ?? '').toString();
+          if (id.isNotEmpty && !seenIds.contains(id)) {
+            results.add(m);
+            seenIds.add(id);
           }
         }
       } catch (_) {}

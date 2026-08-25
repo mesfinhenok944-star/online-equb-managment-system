@@ -230,17 +230,14 @@ class AuthProvider extends ChangeNotifier {
 
   // ── LOGIN ──────────────────────────────────────────────────────────────────
   //
-  // REAL PHONE FIX: Firestore rules require isAuthenticated().
-  // So we MUST sign into Firebase Auth FIRST, then read Firestore.
+  // Firebase Auth (Email/Password) is NOT enabled in this project.
+  // All login uses DIRECT FIRESTORE password verification.
   //
   // Flow:
-  //   Step 1 — Super admin hardcoded check (no network)
-  //   Step 2 — Resolve email from username (Firestore, now needs auth first OR
-  //             we try Firebase Auth with email directly)
-  //   Step 3 — Firebase Auth sign-in (gets authenticated session)
-  //   Step 4 — After auth, load admin/user profile from Firestore
-  //   Step 5 — Admin password check against Firestore record
-  //   Step 6 — REST API backend (Linux desktop fallback only)
+  //   Step 1 — Super admin: hardcoded check + Firestore meta doc
+  //   Step 2 — Admin: Firestore admins collection, match email/username + password
+  //   Step 3 — User:  Firestore users collection
+  //   Step 4 — REST API backend (Linux desktop fallback)
   Future<bool> login(String usernameOrEmail, String password) async {
     _loading = true;
     _error = null;
@@ -257,39 +254,40 @@ class AuthProvider extends ChangeNotifier {
       }
 
       final inputLower = input.toLowerCase();
-      debugPrint('[Login] attempt: input=$inputLower');
+      debugPrint('[Login] attempt: "$inputLower"');
 
-      // ── STEP 1: Super admin hardcoded check (no Firestore needed) ─────────
+      // ── STEP 1: Super admin ──────────────────────────────────────────────
       final defaultSuper = RoleManagementService.defaultSuperAdminProfile();
       final superEmail    = (defaultSuper['email']    ?? '').toString().toLowerCase();
       final superUsername = (defaultSuper['username'] ?? '').toString().toLowerCase();
-      final superPassword = (defaultSuper['password'] ?? '').toString();
+      final superPassword = (defaultSuper['password'] ?? 'abebe1212').toString();
 
-      final isSuperMatch = inputLower == superEmail ||
-          inputLower == superUsername ||
-          inputLower == 'superadmin@equb.et' ||
-          inputLower == 'superadmin';
-
-      if (isSuperMatch && (password == superPassword || password == 'abebe1212' || password == 'admin123')) {
-        debugPrint('[Login] ✅ super admin matched (hardcoded)');
-        // Sign into Firebase Auth for a proper session
-        try {
-          await _auth?.signInWithEmailAndPassword(
-              email: superEmail.isNotEmpty ? superEmail : 'abebe@gmail.com',
-              password: password)
-              .timeout(const Duration(seconds: 8));
-        } catch (_) {}
-        // Load super admin profile from Firestore if available
-        Map<String, dynamic> superProfile = defaultSuper;
-        try {
-          if (_db != null) {
-            final doc = await _db!.collection('meta').doc('super_admin_profile')
-                .get().timeout(const Duration(seconds: 5));
-            if (doc.exists && doc.data() != null) {
-              superProfile = Map<String, dynamic>.from(doc.data()!);
-            }
+      // Try loading super admin from Firestore
+      Map<String, dynamic> superProfile = defaultSuper;
+      try {
+        if (_db != null) {
+          final doc = await _db!.collection('meta').doc('super_admin_profile')
+              .get().timeout(const Duration(seconds: 6));
+          if (doc.exists && doc.data() != null) {
+            superProfile = Map<String, dynamic>.from(doc.data()!);
           }
-        } catch (_) {}
+        }
+      } catch (e) {
+        debugPrint('[Login] super admin Firestore fetch: $e');
+      }
+
+      final spEmail    = (superProfile['email']    ?? superEmail).toString().toLowerCase();
+      final spUsername = (superProfile['username'] ?? superUsername).toString().toLowerCase();
+      final spPassword = (superProfile['password'] ?? superPassword).toString();
+
+      final isSuperInput = inputLower == spEmail || inputLower == spUsername ||
+          inputLower == superEmail || inputLower == superUsername ||
+          inputLower == 'superadmin@equb.et' || inputLower == 'superadmin';
+      final isSuperPass  = password == spPassword || password == superPassword ||
+          password == 'abebe1212' || password == 'admin123';
+
+      if (isSuperInput && isSuperPass) {
+        debugPrint('[Login] ✅ super admin matched');
         _user  = <String, dynamic>{...superProfile, 'role': 'super_admin'};
         _token = 'super_admin_token';
         await _cacheUser();
@@ -300,141 +298,31 @@ class AuthProvider extends ChangeNotifier {
         return true;
       }
 
-      // ── STEP 2: Resolve email if user typed a username ────────────────────
-      // We need an email for Firebase Auth. If input looks like username
-      // (no @), we must resolve it. But Firestore requires auth first —
-      // catch-22. Solution: try Firebase Auth with raw input as email,
-      // and in parallel try to resolve from Firestore without auth
-      // (uses a lenient timeout — will fail on locked rules, that's OK).
-      String? resolvedEmail;
-      if (input.contains('@')) {
-        resolvedEmail = input;
-      } else {
-        // Try Firestore username lookup (may fail if not authed — handled below)
-        resolvedEmail = await _resolveEmail(inputLower);
-        debugPrint('[Login] resolved email from username: $resolvedEmail');
-      }
-
-      // ── STEP 3: Firebase Auth sign-in (MUST happen before Firestore reads) ─
-      // This gives us an authenticated session so Firestore rules pass.
-      String? firebaseUid;
-      String? firebaseToken;
-
-      if (_auth != null && resolvedEmail != null) {
-        try {
-          debugPrint('[Login] trying Firebase Auth with: $resolvedEmail');
-          final cred = await _auth!
-              .signInWithEmailAndPassword(email: resolvedEmail, password: password)
-              .timeout(const Duration(seconds: 12));
-          firebaseUid   = cred.user?.uid;
-          firebaseToken = await cred.user?.getIdToken();
-          debugPrint('[Login] ✅ Firebase Auth OK uid=$firebaseUid');
-        } on FirebaseAuthException catch (e) {
-          debugPrint('[Login] Firebase Auth error: ${e.code} — ${e.message}');
-          if (e.code == 'wrong-password' ||
-              e.code == 'invalid-credential') {
-            // Bad password — stop here
-            _error = _friendlyAuthError(e.code);
-            _loading = false;
-            notifyListeners();
-            return false;
-          }
-          if (e.code == 'user-not-found' || e.code == 'invalid-email') {
-            // Admin exists in Firestore but not in Firebase Auth yet.
-            // Auto-create the Firebase Auth account so future logins work.
-            debugPrint('[Login] user-not-found — attempting auto-create Firebase Auth account');
-            try {
-              final cred2 = await _auth!
-                  .createUserWithEmailAndPassword(
-                      email: resolvedEmail, password: password)
-                  .timeout(const Duration(seconds: 12));
-              firebaseUid   = cred2.user?.uid;
-              firebaseToken = await cred2.user?.getIdToken();
-              debugPrint('[Login] ✅ Firebase Auth auto-created uid=$firebaseUid');
-            } on FirebaseAuthException catch (e2) {
-              debugPrint('[Login] auto-create failed: ${e2.code}');
-              // email-already-in-use means another password was used before
-              if (e2.code == 'email-already-in-use') {
-                _error = 'Incorrect password.\nየይለፍ ቃልዎ ትክክል አይደለም።';
-                _loading = false;
-                notifyListeners();
-                return false;
-              }
-              // Other error — continue to Firestore-only path below
-            } catch (_) {}
-          }
-          // Other errors (network, etc.) — fall through to Firestore-only path
-        } catch (e) {
-          debugPrint('[Login] Firebase Auth exception: $e');
-        }
-      }
-
-      // ── STEP 4: Load profile from Firestore (now authenticated) ──────────
-      if (firebaseUid != null && _db != null) {
-        _token = firebaseToken ?? 'firebase_token_$firebaseUid';
-        await _loadUserProfile(firebaseUid);
-        // _loadUserProfile sets _user and may update _token to admin_token_xxx
-        if (_user != null) {
-          debugPrint('[Login] ✅ profile loaded role=${_user?['role']} level=${_user?['level']}');
-          // For admins: check password matches Firestore record
-          if (_user!['role'] == 'admin') {
-            final storedPwd = (_user!['password'] ?? '').toString();
-            if (storedPwd.isNotEmpty && storedPwd != password) {
-              debugPrint('[Login] ❌ admin password mismatch');
-              await _auth?.signOut();
-              _user  = null;
-              _token = null;
-              _error = 'Incorrect password.\nየይለፍ ቃልዎ ትክክል አይደለም።';
-              _loading = false;
-              notifyListeners();
-              return false;
-            }
-            final docId = (_user!['adminId'] ?? _user!['id'] ?? '').toString();
-            _token = firebaseToken ?? 'admin_token_$docId';
-            // Patch firebaseUid so next login finds admin by uid directly
-            try {
-              if (docId.isNotEmpty) {
-                await _db!.collection('admins').doc(docId).update({
-                  'firebaseUid': firebaseUid,
-                  'uid': firebaseUid,
-                });
-              }
-            } catch (_) {}
-          }
-          await _cacheUser();
-          final prefs = await SharedPreferences.getInstance();
-          await prefs.setString('token', _token ?? '');
-          if (_user!['role'] == 'admin') {
-            final docId = (_user!['adminId'] ?? _user!['id'] ?? '').toString();
-            await prefs.setString('admin_doc_id', docId);
-          }
-          _loading = false;
-          notifyListeners();
-          return true;
-        }
-        debugPrint('[Login] ⚠️ Firebase Auth OK but profile not found for uid=$firebaseUid');
-      }
-
-      // ── STEP 5: Firestore-only path (username lookup + password check) ────
-      // Reached when Firebase Auth failed but Firestore might work
-      // (e.g. admin has no Firebase Auth account yet).
-      debugPrint('[Login] trying Firestore-only admin lookup');
+      // ── STEP 2: Admin — direct Firestore lookup + password check ─────────
+      debugPrint('[Login] checking admins collection for: $inputLower');
       final adminProfile = await _findAdminDirect(inputLower);
       if (adminProfile != null) {
+        debugPrint('[Login] admin found: ${adminProfile['email']} level=${adminProfile['level']}');
         final stored = (adminProfile['password'] ?? '').toString();
-        final ok = stored.isEmpty || stored == password;
-        debugPrint('[Login] Firestore admin found, pwd match=$ok');
-        if (ok) {
+        final pwdOk = stored.isEmpty || stored == password;
+        debugPrint('[Login] password check: stored="${stored.isEmpty ? "(empty)" : stored}" input="$password" ok=$pwdOk');
+
+        if (pwdOk) {
           final docId = (adminProfile['adminId'] ?? adminProfile['id'] ?? '').toString();
           if (docId.isEmpty) {
-            _error = 'Admin account not configured. Contact super admin.\n'
-                'የአስተዳዳሪ መለያ ሙሉ አይደለም። ሱፐር አስተዳዳሪን ያናግሩ።';
+            _error = 'Admin account not fully configured.\n'
+                'Contact your Super Admin.\n'
+                'የአስተዳዳሪ መለያ ሙሉ አይደለም።';
             _loading = false;
             notifyListeners();
             return false;
           }
-          final lvl = (adminProfile['level'] ?? adminProfile['equbLevel'] ?? 'low')
-              .toString().toLowerCase();
+          final lvl = (adminProfile['level'] ??
+                  adminProfile['equbLevel'] ??
+                  adminProfile['assignedLevel'] ??
+                  'low')
+              .toString().toLowerCase().replaceAll('equb_', '');
+
           _user = <String, dynamic>{
             ...adminProfile,
             'adminId': docId,
@@ -448,17 +336,27 @@ class AuthProvider extends ChangeNotifier {
           final prefs = await SharedPreferences.getInstance();
           await prefs.setString('token', _token!);
           await prefs.setString('admin_doc_id', docId);
+          debugPrint('[Login] ✅ admin login success docId=$docId level=$lvl');
           _loading = false;
           notifyListeners();
           return true;
+        } else {
+          // Admin found but wrong password — stop here, don't try user lookup
+          _error = 'Incorrect password.\nየይለፍ ቃልዎ ትክክል አይደለም።';
+          _loading = false;
+          notifyListeners();
+          return false;
         }
       }
 
-      // Regular user Firestore-only path
+      // ── STEP 3: Regular user — Firestore lookup ──────────────────────────
+      debugPrint('[Login] checking users collection');
       final memberProfile = await _findUserDirect(inputLower);
       if (memberProfile != null) {
         final stored = (memberProfile['password'] ?? '').toString();
-        if (stored.isEmpty || stored == password) {
+        final pwdOk  = stored.isEmpty || stored == password;
+        debugPrint('[Login] user found, pwd ok=$pwdOk');
+        if (pwdOk) {
           final userId = (memberProfile['userId'] ?? memberProfile['id'] ?? '').toString();
           _user = <String, dynamic>{
             ...memberProfile,
@@ -473,12 +371,17 @@ class AuthProvider extends ChangeNotifier {
           _loading = false;
           notifyListeners();
           return true;
+        } else {
+          _error = 'Incorrect password.\nየይለፍ ቃልዎ ትክክል አይደለም።';
+          _loading = false;
+          notifyListeners();
+          return false;
         }
       }
 
-      // ── STEP 6: REST API (Linux desktop / when backend server is running) ─
+      // ── STEP 4: REST API (Linux desktop / server fallback) ───────────────
       try {
-        debugPrint('[Login] trying REST API');
+        debugPrint('[Login] trying REST API fallback');
         final res = await ApiService.login(input, password)
             .timeout(const Duration(seconds: 8));
         if (res['token'] != null) {
@@ -498,21 +401,20 @@ class AuthProvider extends ChangeNotifier {
         final isNetErr = errStr.contains('Cannot reach') ||
             errStr.contains('SocketException') ||
             errStr.contains('Connection refused');
-        if (!isNetErr && errStr.isNotEmpty) {
-          _error = errStr;
-        }
+        if (!isNetErr && errStr.isNotEmpty) _error = errStr;
       } catch (_) {}
 
       // All paths exhausted
-      _error ??= 'ኢሜይልዎ ወይም የይለፍ ቃልዎ ትክክል አይደለም።\n'
-          'Invalid credentials — please check your email/username and password.';
-      debugPrint('[Login] ❌ all paths failed, error: $_error');
+      _error ??= 'Account not found.\n'
+          'Please check your email/username and password.\n\n'
+          'መለያ አልተገኘም።\nኢሜይልዎ ወይም የይለፍ ቃልዎ ትክክል አይደለም።';
+      debugPrint('[Login] ❌ all paths failed');
     } on FirebaseAuthException catch (e) {
       _error = _friendlyAuthError(e.code);
       debugPrint('[Login] FirebaseAuthException: ${e.code}');
     } catch (e) {
       debugPrint('[Login] unexpected error: $e');
-      _error = 'Login failed: $e\nዳግም ሞክር።';
+      _error = 'Login error: $e\nዳግም ሞክር።';
     }
 
     _loading = false;
