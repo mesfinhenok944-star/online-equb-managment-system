@@ -71,7 +71,7 @@ class _SelectionSpinnerState extends State<_SelectionSpinner> {
 
       await Future.delayed(Duration(milliseconds: delayMs));
       if (!mounted) return;
-      SoundService.playClickSound();
+      SoundService.playTickSound();
       setState(() {
         _current = (step + 1) % n;
       });
@@ -90,7 +90,7 @@ class _SelectionSpinnerState extends State<_SelectionSpinner> {
     final winnerId = (winner['uniqueId'] ?? winner['userId'] ?? winner['id'] ?? '').toString();
 
     // Announce winner 3 times in Amharic
-    SoundService.speakWinnerRepeatedThreeTimes(fullName: winnerName, uniqueId: winnerId);
+    SoundService.speakWinnerAnnouncement(fullName: winnerName, uniqueId: winnerId);
   }
 
   @override

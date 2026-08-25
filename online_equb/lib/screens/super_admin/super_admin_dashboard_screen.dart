@@ -16,6 +16,10 @@ class SuperAdminDashboardScreen extends StatefulWidget {
 class _SuperAdminDashboardScreenState
     extends State<SuperAdminDashboardScreen> {
   List<Map<String, dynamic>> _admins = [];
+  // Per-level stats loaded in background
+  Map<String, int> _userCounts   = {'low': 0, 'medium': 0, 'high': 0};
+  Map<String, int> _drawCounts   = {'low': 0, 'medium': 0, 'high': 0};
+  Map<String, int> _paymentCounts= {'low': 0, 'medium': 0, 'high': 0};
   bool _loading = true;
   String _searchQuery = '';
   String _filterLevel = 'all';
@@ -40,6 +44,25 @@ class _SuperAdminDashboardScreenState
       _admins = admins;
       _loading = false;
     });
+    // Load per-level stats in background
+    _loadLevelStats();
+  }
+
+  Future<void> _loadLevelStats() async {
+    for (final lvl in ['low', 'medium', 'high']) {
+      try {
+        final users    = await RoleManagementService.getUsersByLevel(lvl);
+        final draws    = await RoleManagementService.getDrawHistory(lvl);
+        final payments = await RoleManagementService.getPaymentsByLevel(lvl);
+        if (mounted) {
+          setState(() {
+            _userCounts[lvl]    = users.length;
+            _drawCounts[lvl]    = draws.length;
+            _paymentCounts[lvl] = payments.length;
+          });
+        }
+      } catch (_) {}
+    }
   }
 
   List<Map<String, dynamic>> get _filtered {

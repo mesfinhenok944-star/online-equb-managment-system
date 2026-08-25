@@ -463,6 +463,55 @@ router.get('/draw/:level/history', async (req, res) => {
   }
 });
 
+router.delete('/draw/:level/:drawId', async (req, res) => {
+  try {
+    const { level, drawId } = req.params;
+    const lvlLower = level.toLowerCase();
+    if (!await requireManagedLevel(req, res, lvlLower)) return;
+
+    let winnerId = null;
+    let winnerUniqueId = null;
+
+    const drawDoc = await db.collection('draws').doc(drawId).get();
+    if (drawDoc.exists) {
+      const dData = drawDoc.data();
+      winnerId = dData.winnerId || null;
+      winnerUniqueId = dData.winnerUniqueId || null;
+      await drawDoc.ref.delete();
+    } else {
+      const snap = await db.collection('draws').get();
+      for (const d of snap.docs) {
+        const dData = d.data();
+        const dLvl = (dData.equbLevel || dData.level || '').toLowerCase();
+        if (dLvl === lvlLower && (d.id === drawId || dData.drawId === drawId)) {
+          winnerId = dData.winnerId || winnerId;
+          winnerUniqueId = dData.winnerUniqueId || winnerUniqueId;
+          await d.ref.delete();
+        }
+      }
+    }
+
+    if (winnerId) {
+      const uRef = db.collection('users').doc(winnerId);
+      const uSnap = await uRef.get();
+      if (uSnap.exists) {
+        await uRef.update({ hasWon: false, status: 'active', updatedAt: nowIso() });
+      }
+    }
+    if (winnerUniqueId) {
+      const uByUid = await db.collection('users').where('uniqueId', '==', winnerUniqueId).get();
+      for (const uDoc of uByUid.docs) {
+        await uDoc.ref.update({ hasWon: false, status: 'active', updatedAt: nowIso() });
+      }
+    }
+
+    return res.json({ success: true, message: 'Draw history deleted successfully.' });
+  } catch (err) {
+    console.error('[admin/deleteDraw]', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /api/v1/admin/analytics
 // ─────────────────────────────────────────────────────────────────────────────

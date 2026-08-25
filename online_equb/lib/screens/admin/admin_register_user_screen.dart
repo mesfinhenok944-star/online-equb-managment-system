@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../../config/theme.dart';
 import '../../services/role_management_service.dart';
+import '../../widgets/page_header_banner.dart';
 
 /// Full user registration / edit form.
 /// Pass [editData] for edit mode; omit for create mode.
@@ -218,6 +220,20 @@ class _AdminRegisterUserScreenState extends State<AdminRegisterUserScreen> {
             onPressed: () => setState(() => _isAmharic = !_isAmharic),
           ),
         ],
+        // Animated banner at the bottom of the AppBar
+        bottom: PreferredSize(
+          preferredSize: const Size.fromHeight(64),
+          child: PageHeaderBanner(
+            color: _levelColor,
+            icon: Icons.how_to_reg_rounded,
+            phrases: PageHeaderBanner.registerPhrases,
+            staticTitle: t(
+              '$_levelLabel Level — Add Member',
+              '$_levelLabel ደረጃ — አባል ጨምር',
+            ),
+            height: 64,
+          ),
+        ),
       ),
       body: SafeArea(
         child: Form(
@@ -237,11 +253,13 @@ class _AdminRegisterUserScreenState extends State<AdminRegisterUserScreen> {
                 child: Row(children: [
                   Icon(Icons.savings, color: _levelColor),
                   const SizedBox(width: 10),
-                  Text(
-                    t('Registering for $_levelLabel Level EQUB',
-                        'ለ$_levelLabel ደረጃ EQUB እያስመዘገቡ ነው'),
-                    style: TextStyle(
-                        color: _levelColor, fontWeight: FontWeight.w600),
+                  Expanded(
+                    child: Text(
+                      t('Registering for $_levelLabel Level EQUB',
+                          'ለ$_levelLabel ደረጃ EQUB እያስመዘገቡ ነው'),
+                      style: TextStyle(
+                          color: _levelColor, fontWeight: FontWeight.w600),
+                    ),
                   ),
                 ]),
               ),
@@ -255,13 +273,53 @@ class _AdminRegisterUserScreenState extends State<AdminRegisterUserScreen> {
                 children: [
                   _row([
                     _field(t('First Name *', 'ስም *'), _firstName,
-                        hint: t('Abebe', 'አበበ'), validator: _required),
+                        hint: t('Abebe', 'አበበ'),
+                        inputFormatters: [
+                          FilteringTextInputFormatter.allow(
+                              RegExp(r'[a-zA-Z\u1200-\u137F ]'))
+                        ],
+                        validator: (v) {
+                          if (v == null || v.trim().isEmpty) {
+                            return t('First name required', 'ስም ያስፈልጋል');
+                          }
+                          if (RegExp(r'[0-9]').hasMatch(v)) {
+                            return t('No numbers in name', 'ቁጥር አይፈቀድም');
+                          }
+                          if (v.trim().length < 2) {
+                            return t('Min 2 characters', 'ቢያንስ 2 ቁምፊዎች');
+                          }
+                          return null;
+                        }),
                     _field(t('Middle Name', 'የአባት ስም'), _middleName,
-                        hint: t('Bekele', 'በቀለ')),
+                        hint: t('Bekele', 'በቀለ'),
+                        inputFormatters: [
+                          FilteringTextInputFormatter.allow(
+                              RegExp(r'[a-zA-Z\u1200-\u137F ]'))
+                        ],
+                        validator: (v) {
+                          if (v != null && v.isNotEmpty &&
+                              RegExp(r'[0-9]').hasMatch(v)) {
+                            return t('No numbers in name', 'ቁጥር አይፈቀድም');
+                          }
+                          return null;
+                        }),
                   ]),
                   const SizedBox(height: 12),
                   _field(t('Last Name *', 'የአያት ስም *'), _lastName,
-                      hint: t('Alemu', 'አለሙ'), validator: _required),
+                      hint: t('Alemu', 'አለሙ'),
+                      inputFormatters: [
+                        FilteringTextInputFormatter.allow(
+                            RegExp(r'[a-zA-Z\u1200-\u137F ]'))
+                      ],
+                      validator: (v) {
+                        if (v == null || v.trim().isEmpty) {
+                          return t('Last name required', 'የአያት ስም ያስፈልጋል');
+                        }
+                        if (RegExp(r'[0-9]').hasMatch(v)) {
+                          return t('No numbers in name', 'ቁጥር አይፈቀድም');
+                        }
+                        return null;
+                      }),
                 ],
               ),
               const SizedBox(height: 16),
@@ -280,8 +338,10 @@ class _AdminRegisterUserScreenState extends State<AdminRegisterUserScreen> {
                         if (v == null || v.trim().isEmpty) {
                           return t('Email required', 'ኢሜይል ያስፈልጋል');
                         }
-                        if (!v.contains('@')) {
-                          return t('Invalid email', 'ትክክለኛ ኢሜይል ያስገቡ');
+                        final rx = RegExp(r'^[\w.\-]+@[\w\-]+\.[a-zA-Z]{2,}$');
+                        if (!rx.hasMatch(v.trim())) {
+                          return t('Enter a valid email (user@domain.com)',
+                              'ትክክለኛ ኢሜይል ያስገቡ (user@domain.com)');
                         }
                         return null;
                       }),
@@ -289,13 +349,23 @@ class _AdminRegisterUserScreenState extends State<AdminRegisterUserScreen> {
                   _field(t('Phone Number *', 'ስልክ ቁጥር *'), _phone,
                       hint: '09XXXXXXXX',
                       type: TextInputType.phone,
+                      inputFormatters: [
+                        FilteringTextInputFormatter.allow(
+                            RegExp(r'[0-9+\-\s]'))
+                      ],
                       validator: (v) {
                         if (v == null || v.trim().isEmpty) {
                           return t('Phone required', 'ስልክ ያስፈልጋል');
                         }
-                        if (!RegExp(r'^0[79]\d{8}$').hasMatch(v.trim())) {
-                          return t('Invalid Ethiopian phone',
-                              'ትክክለኛ የኢትዮጵያ ስልክ ቁጥር ያስፈልጋል');
+                        final clean =
+                            v.trim().replaceAll(RegExp(r'[\s\-]'), '');
+                        final local = RegExp(r'^0[79]\d{8}$');
+                        final intl =
+                            RegExp(r'^\+2519\d{8}$|^\+2517\d{8}$');
+                        if (!local.hasMatch(clean) && !intl.hasMatch(clean)) {
+                          return t(
+                              'Use Ethiopian format: 09XXXXXXXX or +2519XXXXXXXX',
+                              'ትክክለኛ ቅርጸት ይጠቀሙ: 09XXXXXXXX');
                         }
                         return null;
                       }),
@@ -472,6 +542,7 @@ class _AdminRegisterUserScreenState extends State<AdminRegisterUserScreen> {
     String? hint,
     TextInputType type = TextInputType.text,
     bool enabled = true,
+    List<TextInputFormatter>? inputFormatters,
     String? Function(String?)? validator,
   }) {
     return Column(
@@ -485,6 +556,7 @@ class _AdminRegisterUserScreenState extends State<AdminRegisterUserScreen> {
           controller: controller,
           keyboardType: type,
           enabled: enabled,
+          inputFormatters: inputFormatters,
           validator: validator,
           decoration: InputDecoration(
             hintText: hint ?? label,

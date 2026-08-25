@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../config/theme.dart';
 import '../../services/api_service.dart';
 import '../../services/role_management_service.dart';
@@ -101,17 +103,23 @@ class _SuperAdminAdminFormScreenState extends State<SuperAdminAdminFormScreen> {
 
     setState(() => _saving = true);
 
+    final email = _email.text.trim().toLowerCase();
+    final password =
+        _password.text.isNotEmpty ? _password.text : 'admin123';
+
     final payload = <String, dynamic>{
       'firstName': _firstName.text.trim(),
       'middleName': _middleName.text.trim(),
       'lastName': _lastName.text.trim(),
-      'email': _email.text.trim().toLowerCase(),
+      'email': email,
       'username': _username.text.trim().isEmpty
-          ? _email.text.trim().split('@').first
+          ? email.split('@').first
           : _username.text.trim(),
       'phone': _phone.text.trim(),
       'address': _address.text.trim(),
       'level': _selectedLevel,
+      'equbLevel': _selectedLevel,
+      'password': password,
       'contactInfo': {
         'phoneNumber': _phone.text.trim(),
         'alternatePhone': _altPhone.text.trim(),
@@ -123,26 +131,78 @@ class _SuperAdminAdminFormScreenState extends State<SuperAdminAdminFormScreen> {
       },
     };
 
-    if (!_isEdit && _password.text.isNotEmpty) {
-      payload['password'] = _password.text;
-    }
-
-    bool ok;
+    bool ok = false;
     String? errorMsg;
     String? successMsg;
 
     if (_isEdit) {
+      // ── EDIT: update Firestore admin document ──────────────────────────
       ok = await RoleManagementService.updateAdmin(
-          (widget.editData?['adminId'] ?? widget.editData?['id'] ?? '').toString(), payload);
+        (widget.editData?['adminId'] ?? widget.editData?['id'] ?? '').toString(),
+        payload,
+      );
       errorMsg = t('Failed to update admin.', 'አስተዳዳሪ ሊሻሻል አልቻለም።');
       successMsg = t('Admin updated successfully.', 'አስተዳዳሪ ተሻሽሏል።');
     } else {
+      // ── CREATE: write to Firestore admins collection first ─────────────
       final res = await RoleManagementService.createAdminResult(payload);
       ok = res['success'] == true;
+
       if (ok) {
-        successMsg = res['message'] ?? t('Admin assigned successfully.', 'አስተዳዳሪ ተመድቧል።');
+        final firestoreDocId = (res['id'] ?? '').toString();
+        successMsg = res['message'] ??
+            t('Admin assigned successfully.', 'አስተዳዳሪ ተመድቧል።');
+
+        // ── Create Firebase Auth account so admin can login ──────────────
+        // This runs AFTER the Firestore write so the admin doc always exists.
+        String? firebaseUid;
+        try {
+          final authInstance = FirebaseAuth.instance;
+
+          // Check if account already exists by trying to sign in first
+          UserCredential? cred;
+          try {
+            cred = await authInstance.createUserWithEmailAndPassword(
+              email: email,
+              password: password,
+            );
+            firebaseUid = cred.user?.uid;
+          } on FirebaseAuthException catch (e) {
+            if (e.code == 'email-already-in-use') {
+              // Auth account exists; just fetch its UID via sign-in
+              try {
+                final existing = await authInstance.signInWithEmailAndPassword(
+                  email: email,
+                  password: password,
+                );
+                firebaseUid = existing.user?.uid;
+                // Sign out immediately — super admin is doing the creation
+                await authInstance.signOut();
+              } catch (_) {}
+            }
+          }
+
+          // Link the Firebase UID back into the Firestore admin document
+          if (firebaseUid != null && firestoreDocId.isNotEmpty) {
+            try {
+              await FirebaseFirestore.instance
+                  .collection('admins')
+                  .doc(firestoreDocId)
+                  .update({
+                'firebaseUid': firebaseUid,
+                'uid': firebaseUid,
+                'updatedAt': FieldValue.serverTimestamp(),
+              });
+            } catch (_) {}
+          }
+        } catch (authErr) {
+          // Firebase Auth creation failed — admin can still login via
+          // Firestore-only path; not fatal.
+          debugPrint('[AdminForm] Firebase Auth creation warning: $authErr');
+        }
       } else {
-        errorMsg = res['error'] ?? t('Failed to assign admin.', 'አስተዳዳሪውን መመደብ አልተቻለም።');
+        errorMsg =
+            res['error'] ?? t('Failed to assign admin.', 'አስተዳዳሪውን መመደብ አልተቻለም።');
       }
     }
 
@@ -151,14 +211,18 @@ class _SuperAdminAdminFormScreenState extends State<SuperAdminAdminFormScreen> {
 
     if (ok) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(successMsg ?? t('Admin saved successfully.', 'አስተዳዳሪው በተሳካ ሁኔታ ተስቀምጧል።')),
+        content: Text(successMsg ??
+            t('Admin saved successfully.', 'አስተዳዳሪው በተሳካ ሁኔታ ተስቀምጧል።')),
         backgroundColor: AppColors.success,
+        duration: const Duration(seconds: 3),
       ));
       context.pop();
     } else {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(errorMsg ?? t('Failed to process request.', 'ጥያቄውን ማከናወን አልተቻለም።')),
+        content: Text(
+            errorMsg ?? t('Failed to process request.', 'ጥያቄውን ማከናወን አልተቻለም።')),
         backgroundColor: AppColors.error,
+        duration: const Duration(seconds: 4),
       ));
     }
   }

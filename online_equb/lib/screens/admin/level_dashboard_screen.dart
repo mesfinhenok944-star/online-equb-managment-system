@@ -1,13 +1,17 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:go_router/go_router.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../config/theme.dart';
 import '../../providers/auth_provider.dart';
 import '../../services/role_management_service.dart';
 import '../../services/api_service.dart';
 import '../../services/sound_service.dart';
+import '../../services/equb_draw_algorithm.dart';
 import '../../utils/constants.dart';
 import '../../widgets/equb_draw_wheel.dart';
+import '../../widgets/offline_banner.dart';
 import 'admin_register_user_screen.dart';
 import 'level_admin_payment_verification_screen.dart';
 
@@ -36,9 +40,9 @@ class LevelDashboardScreen extends StatefulWidget {
   State<LevelDashboardScreen> createState() => _LevelDashboardScreenState();
 }
 
-class _LevelDashboardScreenState extends State<LevelDashboardScreen>
-    with SingleTickerProviderStateMixin {
-  late TabController _tabController;
+class _LevelDashboardScreenState extends State<LevelDashboardScreen> {
+  // BottomNavigationBar index (replaces TabController)
+  // 0=Members 1=Draw 2=Payments 3=History 4=Settings
   List<Map<String, dynamic>> _participants = [];
   List<Map<String, dynamic>> _drawHistory = [];
   bool _loading = true;
@@ -92,6 +96,29 @@ class _LevelDashboardScreenState extends State<LevelDashboardScreen>
           (p) => p['hasWon'] != true && (p['status'] ?? 'active') == 'active')
       .toList();
 
+  List<Map<String, dynamic>> _levelPayments = [];
+  String _paymentFilterStatus = 'pending_verification';
+
+  int get _pendingPaymentsCount => _levelPayments.where((p) {
+        final st = (p['status'] ?? 'pending_verification').toString();
+        return st == 'pending_verification' || st == 'pending';
+      }).length;
+
+  String _getMemberPaymentStatus(Map<String, dynamic> user) {
+    if (user['hasPaid'] == true) return 'verified';
+    final uEmail = (user['email'] ?? '').toString().toLowerCase().trim();
+    final uId = (user['uniqueId'] ?? user['userId'] ?? '').toString().trim();
+
+    for (final pay in _levelPayments) {
+      final pEmail = (pay['email'] ?? '').toString().toLowerCase().trim();
+      final pId = (pay['nationalId'] ?? pay['uniqueId'] ?? pay['userId'] ?? '').toString().trim();
+      if ((uEmail.isNotEmpty && pEmail == uEmail) || (uId.isNotEmpty && pId == uId)) {
+        return (pay['status'] ?? 'unpaid').toString();
+      }
+    }
+    return 'unpaid';
+  }
+
   List<Map<String, dynamic>> get _filteredParticipants {
     return _participants.where((p) {
       // search
@@ -113,6 +140,14 @@ class _LevelDashboardScreenState extends State<LevelDashboardScreen>
             p['hasWon'] != true && (p['status'] ?? 'active') == 'active';
       } else if (_participantFilter == 'winners') {
         matchFilter = p['hasWon'] == true;
+      } else if (_participantFilter == 'paid') {
+        matchFilter = p['hasPaid'] == true || _getMemberPaymentStatus(p) == 'verified';
+      } else if (_participantFilter == 'pending_payment') {
+        final st = _getMemberPaymentStatus(p);
+        matchFilter = st == 'pending_verification' || st == 'pending';
+      } else if (_participantFilter == 'unpaid') {
+        final st = _getMemberPaymentStatus(p);
+        matchFilter = p['hasPaid'] != true && st != 'verified' && st != 'pending_verification' && st != 'pending';
       } else if (_participantFilter == 'suspended') {
         matchFilter = (p['status'] ?? 'active') == 'suspended';
       }
@@ -131,10 +166,12 @@ class _LevelDashboardScreenState extends State<LevelDashboardScreen>
   bool _settingsSaving = false;
   bool _obscureSettingsPass = true;
 
+  late int _currentNavIndex;
+
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 4, vsync: this);
+    _currentNavIndex = 0;
     _isAmharic = widget.isAmharic;
     _settingsNameController = TextEditingController(
         text: widget.data['fullName'] ?? widget.data['firstName'] ?? '');
@@ -153,7 +190,6 @@ class _LevelDashboardScreenState extends State<LevelDashboardScreen>
 
   @override
   void dispose() {
-    _tabController.dispose();
     _settingsNameController.dispose();
     _settingsEmailController.dispose();
     _settingsUsernameController.dispose();
@@ -168,6 +204,7 @@ class _LevelDashboardScreenState extends State<LevelDashboardScreen>
     setState(() => _loading = true);
     final users = await RoleManagementService.getUsersByLevel(widget.level);
     final history = await RoleManagementService.getDrawHistory(widget.level);
+    final payments = await RoleManagementService.getPaymentsByLevel(widget.level);
 
     if (mounted) {
       final authUser = context.read<AuthProvider>().user ?? widget.data;
@@ -184,6 +221,7 @@ class _LevelDashboardScreenState extends State<LevelDashboardScreen>
     setState(() {
       _participants = users;
       _drawHistory = history;
+      _levelPayments = payments;
       _loading = false;
     });
   }
@@ -219,17 +257,45 @@ class _LevelDashboardScreenState extends State<LevelDashboardScreen>
   }
 
   // ── build ─────────────────────────────────────────────────────────────────
+  //
+  // Layout:
+  //   AppBar             — title, lang, refresh, logout
+  //   Top segmented tabs — Members (0) | Draw (1) | Settings (2)
+  //   Body content       — selected top tab OR Payments/History full page
+  //   Bottom bar         — Payments | History  (only these 2 at the bottom)
+  //
+  // _currentNavIndex:  0 = top-tabs active | 1 = Payments | 2 = History
+  // _topTabIndex:      0 = Members | 1 = Draw | 2 = Settings
+
+  int _topTabIndex = 0;
+
   @override
   Widget build(BuildContext context) {
+    final bool showTopTabs = _currentNavIndex == 0;
+
     return Scaffold(
       backgroundColor: AppColors.background,
       appBar: AppBar(
-        title:
-            Text(t('$_levelLabel Level Dashboard', '$_levelLabel ደረጃ ዳሽቦርድ')),
+        title: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 10,
+              height: 10,
+              decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.9),
+                  shape: BoxShape.circle),
+            ),
+            const SizedBox(width: 8),
+            Text(t('$_levelLabel Level Dashboard',
+                '$_levelLabel ደረጃ ዳሽቦርድ')),
+          ],
+        ),
         backgroundColor: _levelColor,
         foregroundColor: Colors.white,
+        elevation: 2,
         leading: IconButton(
-          icon: const Icon(Icons.arrow_back),
+          icon: const Icon(Icons.arrow_back_ios_new_rounded),
           onPressed: () {
             if (Navigator.canPop(context)) {
               Navigator.pop(context);
@@ -237,21 +303,8 @@ class _LevelDashboardScreenState extends State<LevelDashboardScreen>
               context.go('/home');
             }
           },
-          tooltip: t('Back', 'ተመለስ'),
         ),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.payments_rounded, color: Colors.amber),
-            tooltip: t('Verify Payments', 'ክፍያዎችን አረጋግጥ'),
-            onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => LevelAdminPaymentVerificationScreen(level: widget.level),
-                ),
-              );
-            },
-          ),
           IconButton(
             icon: Text(
               _isAmharic ? 'EN' : 'አማ',
@@ -263,73 +316,162 @@ class _LevelDashboardScreenState extends State<LevelDashboardScreen>
             onPressed: () => setState(() => _isAmharic = !_isAmharic),
           ),
           IconButton(
-            icon: const Icon(Icons.refresh),
+            icon: const Icon(Icons.refresh_rounded),
+            tooltip: t('Refresh', 'ዳግም ጫን'),
             onPressed: _loadData,
           ),
-          Padding(
-            padding: const EdgeInsets.only(right: 8.0),
-            child: Material(
-              color: Colors.white.withOpacity(0.15),
-              borderRadius: BorderRadius.circular(10),
-              child: InkWell(
-                borderRadius: BorderRadius.circular(10),
-                onTap: _confirmLogout,
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Icon(Icons.logout_rounded, color: Colors.white, size: 18),
-                      const SizedBox(width: 4),
-                      Text(
-                        t('Logout', 'ውጣ'),
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.bold,
-                          fontSize: 12,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
+          IconButton(
+            icon: const Icon(Icons.logout_rounded),
+            tooltip: t('Logout', 'ውጣ'),
+            onPressed: _confirmLogout,
           ),
         ],
-        bottom: TabBar(
-          controller: _tabController,
-          indicatorColor: Colors.white,
-          labelColor: Colors.white,
-          unselectedLabelColor: Colors.white70,
-          tabs: [
-            Tab(text: t('Members', 'አባላት')),
-            Tab(text: t('Draw Algorithm', 'የእጣ ስልተ ቀመር')),
-            Tab(text: t('History', 'ታሪክ')),
-            Tab(text: t('Settings', 'መቼቶች')),
+      ),
+      floatingActionButton:
+          (showTopTabs && _topTabIndex == 0)
+              ? FloatingActionButton.extended(
+                  onPressed: _addUser,
+                  backgroundColor: _levelColor,
+                  icon: const Icon(Icons.person_add),
+                  label: Text(t('Add User', 'ተጠቃሚ ጨምር')),
+                )
+              : null,
+      body: Column(
+        children: [
+          const OfflineBanner(),
+          if (showTopTabs) _buildTopTabBar(),
+          Expanded(
+            child: _loading
+                ? const Center(child: CircularProgressIndicator())
+                : _buildPage(showTopTabs),
+          ),
+        ],
+      ),
+      bottomNavigationBar: _buildBottomBar(),
+    );
+  }
+
+  Widget _buildTopTabBar() {
+    return Container(
+      color: Colors.white,
+      child: Row(
+        children: [
+          _topTab(0, Icons.people_alt_rounded, Icons.people_alt_outlined, t('Members', 'አባላት')),
+          _topTab(1, Icons.casino_rounded, Icons.casino_outlined, t('Draw', 'ዕጣ')),
+          _topTab(2, Icons.settings_rounded, Icons.settings_outlined, t('Settings', 'መቼቶች')),
+        ],
+      ),
+    );
+  }
+
+  Widget _topTab(int idx, IconData active, IconData inactive, String label) {
+    final sel = _topTabIndex == idx;
+    return Expanded(
+      child: GestureDetector(
+        onTap: () => setState(() { _topTabIndex = idx; _currentNavIndex = 0; }),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          padding: const EdgeInsets.symmetric(vertical: 10),
+          decoration: BoxDecoration(
+            border: Border(bottom: BorderSide(
+              color: sel ? _levelColor : Colors.transparent, width: 3)),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(sel ? active : inactive,
+                  color: sel ? _levelColor : AppColors.textSecondary, size: 20),
+              const SizedBox(height: 3),
+              Text(label, style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: sel ? FontWeight.bold : FontWeight.normal,
+                  color: sel ? _levelColor : AppColors.textSecondary)),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPage(bool showTopTabs) {
+    if (!showTopTabs) {
+      return _currentNavIndex == 1 ? _buildPaymentsTab() : _buildHistoryTab();
+    }
+    switch (_topTabIndex) {
+      case 1: return _buildDrawWheelTab();
+      case 2: return _buildSettingsTab();
+      default: return _buildMembersTab();
+    }
+  }
+
+  Widget _buildBottomBar() {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        boxShadow: [BoxShadow(
+            color: Colors.black.withOpacity(0.08),
+            blurRadius: 12, offset: const Offset(0, -2))],
+      ),
+      child: SafeArea(
+        child: Row(
+          children: [
+            Expanded(child: _bottomItem(1, Icons.receipt_long_outlined,
+                Icons.receipt_long_rounded, t('Payments', 'ክፍያዎች'),
+                badge: _pendingPaymentsCount)),
+            Container(width: 1, height: 40, color: AppColors.divider),
+            Expanded(child: _bottomItem(2, Icons.history_outlined,
+                Icons.history_rounded, t('History', 'ታሪክ'))),
           ],
         ),
       ),
-      floatingActionButton: _tabController.index == 0
-          ? FloatingActionButton.extended(
-              onPressed: _addUser,
-              backgroundColor: _levelColor,
-              icon: const Icon(Icons.person_add),
-              label: Text(t('Add User', 'ተጠቃሚ ጨምር')),
-            )
-          : null,
-      body: _loading
-          ? const Center(child: CircularProgressIndicator())
-          : TabBarView(
-              controller: _tabController,
-              children: [
-                _buildMembersTab(),
-                _buildDrawWheelTab(),
-                _buildHistoryTab(),
-                _buildSettingsTab(),
-              ],
-            ),
     );
   }
+
+  Widget _bottomItem(int navIdx, IconData icon, IconData activeIcon,
+      String label, {int badge = 0}) {
+    final sel = _currentNavIndex == navIdx;
+    return GestureDetector(
+      onTap: () => setState(() => _currentNavIndex = navIdx),
+      child: Container(
+        color: Colors.transparent,
+        padding: const EdgeInsets.symmetric(vertical: 10),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Stack(clipBehavior: Clip.none, children: [
+              Icon(sel ? activeIcon : icon,
+                  color: sel ? _levelColor : AppColors.textSecondary, size: 24),
+              if (badge > 0)
+                Positioned(
+                  right: -6, top: -4,
+                  child: Container(
+                    padding: const EdgeInsets.all(3),
+                    decoration: const BoxDecoration(
+                        color: Colors.amber, shape: BoxShape.circle),
+                    child: Text('$badge', style: const TextStyle(
+                        fontSize: 9, color: Colors.black,
+                        fontWeight: FontWeight.bold)),
+                  ),
+                ),
+            ]),
+            const SizedBox(height: 3),
+            Text(label, style: TextStyle(
+                fontSize: 11,
+                fontWeight: sel ? FontWeight.bold : FontWeight.normal,
+                color: sel ? _levelColor : AppColors.textSecondary)),
+            const SizedBox(height: 2),
+            AnimatedContainer(
+              duration: const Duration(milliseconds: 200),
+              height: 3, width: sel ? 30 : 0,
+              decoration: BoxDecoration(
+                  color: _levelColor, borderRadius: BorderRadius.circular(2)),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
 
   Widget _buildExpertSystemAdvisor() {
     final total = _participants.length;
@@ -500,6 +642,13 @@ class _LevelDashboardScreenState extends State<LevelDashboardScreen>
                   '${_participants.where((p) => p['hasWon'] == true).length}',
                   AppColors.warning),
               _miniStat(t('Cap', 'ቁጥር'), '$_maxSlots', AppColors.textSecondary),
+              const Spacer(),
+              // Export CSV
+              IconButton(
+                icon: Icon(Icons.download_rounded, color: _levelColor, size: 22),
+                tooltip: t('Export Members CSV', 'አባሎችን ወደ CSV ላክ'),
+                onPressed: _participants.isEmpty ? null : _exportMembersCSV,
+              ),
             ],
           ),
         ),
@@ -559,6 +708,12 @@ class _LevelDashboardScreenState extends State<LevelDashboardScreen>
                     _filterChip(t('Eligible', 'ብቁ'), 'eligible'),
                     const SizedBox(width: 6),
                     _filterChip(t('Winners', 'አሸናፊዎች'), 'winners'),
+                    const SizedBox(width: 6),
+                    _filterChip(t('Paid', 'የከፈሉ'), 'paid'),
+                    const SizedBox(width: 6),
+                    _filterChip(t('Pending', 'ማረጋገጫ የሚጠብቁ'), 'pending_payment'),
+                    const SizedBox(width: 6),
+                    _filterChip(t('Unpaid', 'ያልከፈሉ'), 'unpaid'),
                     const SizedBox(width: 6),
                     _filterChip(t('Suspended', 'ታግዷል'), 'suspended'),
                   ],
@@ -942,59 +1097,146 @@ class _LevelDashboardScreenState extends State<LevelDashboardScreen>
               ],
             ),
           ),
+
+          const SizedBox(height: 16),
+
+          // ── Reset Draw Cycle button ─────────────────────────────────────
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              onPressed: _participants.isEmpty ? null : _resetDrawCycle,
+              icon: const Icon(Icons.refresh_rounded, color: Colors.orange),
+              label: Text(
+                t('Reset Draw Cycle (New Round)', 'ዑደቱን ዳግም ጀምር (አዲስ ዙር)'),
+                style: const TextStyle(
+                    color: Colors.orange,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 14),
+              ),
+              style: OutlinedButton.styleFrom(
+                minimumSize: const Size(double.infinity, 50),
+                side: const BorderSide(color: Colors.orange, width: 1.5),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12)),
+              ),
+            ),
+          ),
         ],
       ),
     );
   }
 
+  /// Pick a winner locally using [EqubDrawAlgorithm] (cryptographically secure).
+  /// Falls back to the REST-API server if it is reachable, but the local draw
+  /// always works even when the backend is offline.
+  /// Returns the index of the winner inside [_eligible] so the wheel can
+  /// animate to the correct slice.
   Future<int?> _requestServerWinner() async {
     if (_eligible.isEmpty) return null;
 
-    final result = await ApiService.adminRunDraw(widget.level);
-    if (result.containsKey('error')) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text(result['error'].toString()),
-          backgroundColor: AppColors.error,
-        ));
+    // ── 1. Try the backend draw first (optional) ─────────────────────────
+    try {
+      final result = await ApiService.adminRunDraw(widget.level)
+          .timeout(const Duration(seconds: 8));
+
+      if (!result.containsKey('error') && result['winnerId'] != null) {
+        final winnerId = result['winnerId'].toString();
+        final idx = _eligible.indexWhere((p) =>
+            (p['userId'] ?? p['id'] ?? p['participantId']).toString() ==
+            winnerId);
+        if (idx >= 0) {
+          _pendingDraw = result;
+          return idx;
+        }
       }
-      return null;
+    } catch (_) {
+      // server offline or timeout — proceed with local draw below
     }
 
-    final winnerId = result['winnerId']?.toString();
-    final index = _eligible.indexWhere(
-      (participant) =>
-          (participant['userId'] ?? participant['id']).toString() == winnerId,
-    );
-    if (index < 0) return null;
-    _pendingDraw = result;
-    return index;
+    // ── 2. Local draw using EqubDrawAlgorithm (Firestore-first) ──────────
+    final localIndex = EqubDrawAlgorithm.chooseWinnerIndex(_eligible);
+    if (localIndex == null || localIndex < 0) return null;
+
+    final winner = _eligible[localIndex];
+    _pendingDraw = {
+      'local': true,
+      'winnerId': (winner['userId'] ?? winner['id'] ?? winner['participantId'] ?? '').toString(),
+      'winnerName': (winner['fullName'] ?? winner['firstName'] ?? '').toString(),
+      'winnerUniqueId': (winner['uniqueId'] ?? '').toString(),
+    };
+    return localIndex;
   }
 
+  /// Called by [EqubDrawWheel] after the animation finishes.
+  /// Persists the winner to Firestore (hasWon=true, status=selected,
+  /// draw record in draws/ collection) then refreshes the local lists
+  /// so the winner never appears in eligible again.
   Future<void> _handleWinnerSelected(int index) async {
     if (index < 0 || index >= _eligible.length) return;
-    final winner = _eligible[index];
     if (_pendingDraw == null) return;
 
+    final winner = Map<String, dynamic>.from(_eligible[index]);
     setState(() => _isSpinning = true);
 
-    // The backend selected and saved this winner before the wheel animation.
-    // Reloading makes the winner unavailable for every later spin.
-    await _loadData();
+    final adminId = _resolvedAdminId;
+    final winnerId =
+        (winner['userId'] ?? winner['id'] ?? winner['participantId'] ?? '').toString();
+    final winnerName =
+        (winner['fullName'] ?? winner['firstName'] ?? '').toString();
+    final winnerUniqueId = (winner['uniqueId'] ?? winner['participantId'] ?? winnerId).toString();
+    final drawNumber = _drawHistory.length + 1;
+
+    // ── Persist to Firestore and get back the saved record ───────────────
+    final savedRecord = await RoleManagementService.saveDrawResult(
+      equbLevel: widget.level,
+      adminId: adminId,
+      winnerId: winnerId,
+      winnerName: winnerName,
+      winnerUniqueId: winnerUniqueId,
+      drawNumber: drawNumber,
+      participantIds: _participants
+          .map((p) =>
+              (p['userId'] ?? p['id'] ?? p['participantId'] ?? '').toString())
+          .toList(),
+    );
+
+    // ── Update local state immediately (no reload latency) ───────────────
+    final now = DateTime.now().toUtc().toIso8601String();
+    // Mark winner in local participants list
+    for (final p in _participants) {
+      final pid = (p['userId'] ?? p['id'] ?? p['participantId'] ?? '').toString();
+      if (pid == winnerId) {
+        p['hasWon'] = true;
+        p['status'] = 'selected';
+        p['selectedAt'] = now;
+        p['roundNumber'] = drawNumber;
+        break;
+      }
+    }
+    // Add to local draw history so History tab shows the winner immediately.
+    // Use the record returned by saveDrawResult so drawId, createdAt,
+    // winnerName etc. are all consistent with what Firestore stored.
+    _drawHistory.insert(0, savedRecord);
+
     _pendingDraw = null;
     setState(() => _isSpinning = false);
 
     if (!mounted) return;
+
+    // Show winner dialog + speak announcement
     _showWinnerDialog(winner);
     widget.onRefresh();
+
+    // Reload from Firestore in background so list is authoritative
+    _loadData();
   }
 
   void _showWinnerDialog(Map<String, dynamic> winner) {
     final name = (winner['fullName'] ?? winner['firstName'] ?? '').toString();
     final uid = (winner['uniqueId'] ?? winner['userId'] ?? winner['id'] ?? '').toString();
 
-    // Trigger 3-times repeated Amharic winner announcement
-    SoundService.speakWinnerRepeatedThreeTimes(fullName: name, uniqueId: uid);
+    // Smart bilingual announcement — Amharic + English, repeats until stopped
+    SoundService.speakWinnerAnnouncement(fullName: name, uniqueId: uid, levelName: _levelLabel);
 
     showDialog(
       context: context,
@@ -1272,6 +1514,12 @@ class _LevelDashboardScreenState extends State<LevelDashboardScreen>
                                     ),
                                     child: const Icon(Icons.emoji_events, color: Colors.amber, size: 18),
                                   ),
+                                  const SizedBox(width: 4),
+                                  IconButton(
+                                    icon: const Icon(Icons.delete_outline_rounded, color: Colors.red, size: 20),
+                                    onPressed: () => _confirmDeleteHistory(draw),
+                                    tooltip: t('Delete Draw Record', 'የእጣ መዝገቡን ሰርዝ'),
+                                  ),
                                 ],
                               ),
                               const SizedBox(height: 10),
@@ -1371,7 +1619,7 @@ class _LevelDashboardScreenState extends State<LevelDashboardScreen>
       MaterialPageRoute(
         builder: (_) => AdminRegisterUserScreen(
           level: widget.level,
-          adminId: widget.adminId,
+          adminId: _resolvedAdminId,
         ),
       ),
     );
@@ -1384,12 +1632,25 @@ class _LevelDashboardScreenState extends State<LevelDashboardScreen>
       MaterialPageRoute(
         builder: (_) => AdminRegisterUserScreen(
           level: widget.level,
-          adminId: widget.adminId,
+          adminId: _resolvedAdminId,
           editData: user,
         ),
       ),
     );
     if (result == true) _loadData();
+  }
+
+  /// Returns the real Firestore document ID for the currently-logged-in admin.
+  /// Priority: AuthProvider.user['adminId'] → widget.adminId → data['adminId'].
+  String get _resolvedAdminId {
+    final authUser = context.read<AuthProvider>().user;
+    final fromAuth =
+        (authUser?['adminId'] ?? authUser?['id'] ?? authUser?['uid'] ?? '')
+            .toString()
+            .trim();
+    if (fromAuth.isNotEmpty) return fromAuth;
+    if (widget.adminId.isNotEmpty) return widget.adminId;
+    return (widget.data['adminId'] ?? widget.data['id'] ?? '').toString().trim();
   }
 
   Future<void> _toggleUserStatus(Map<String, dynamic> user) async {
@@ -1536,9 +1797,69 @@ class _LevelDashboardScreenState extends State<LevelDashboardScreen>
   // TAB 4 – Settings
   // ═══════════════════════════════════════════════════════════════════════════
   Widget _buildSettingsTab() {
+    final authUser = context.read<AuthProvider>().user ?? {};
+    final displayLevel = (_levelLabel).toUpperCase();
+    final displayEmail = _settingsEmailController.text.isNotEmpty
+        ? _settingsEmailController.text
+        : (authUser['email'] ?? '').toString();
+
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
+        // ── Level & Admin identity banner ─────────────────────────────────
+        Container(
+          padding: const EdgeInsets.all(14),
+          margin: const EdgeInsets.only(bottom: 14),
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              colors: [_levelColor.withOpacity(0.15), _levelColor.withOpacity(0.05)],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: _levelColor.withOpacity(0.35)),
+          ),
+          child: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                    color: _levelColor.withOpacity(0.15),
+                    shape: BoxShape.circle),
+                child: Icon(Icons.badge_rounded, color: _levelColor, size: 26),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '$displayLevel LEVEL ADMIN',
+                      style: TextStyle(
+                        fontWeight: FontWeight.w900,
+                        fontSize: 13,
+                        color: _levelColor,
+                        letterSpacing: 0.5,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      displayEmail.isNotEmpty ? displayEmail : '—',
+                      style: const TextStyle(
+                          fontSize: 12, color: AppColors.textSecondary),
+                    ),
+                  ],
+                ),
+              ),
+              IconButton(
+                icon: Icon(Icons.refresh_rounded, color: _levelColor),
+                tooltip: t('Reload profile', 'መገለጫ ዳግም ጫን'),
+                onPressed: _loadData,
+              ),
+            ],
+          ),
+        ),
+
         Card(
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
           child: Padding(
@@ -1570,9 +1891,13 @@ class _LevelDashboardScreenState extends State<LevelDashboardScreen>
                           ),
                           const SizedBox(height: 2),
                           Text(
-                            t('Update your username, password, phone, and details for $_levelLabel level',
-                              'ለ$_levelLabel ደረጃ የእርስዎን ተጠቃሚ ስም፣ የይለፍ ቃል፣ ስልክ እና መረጃዎችን ያሻሽሉ'),
-                            style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
+                            t(
+                              'Update your info for $_levelLabel level',
+                              'ለ$_levelLabel ደረጃ መረጃዎን ያሻሽሉ',
+                            ),
+                            style: const TextStyle(
+                                fontSize: 12,
+                                color: AppColors.textSecondary),
                           ),
                         ],
                       ),
@@ -1584,131 +1909,164 @@ class _LevelDashboardScreenState extends State<LevelDashboardScreen>
                 const SizedBox(height: 16),
 
                 // Full Name
-                Text(t('Full Name', 'ሙሉ ስም'),
-                    style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
-                const SizedBox(height: 6),
-                TextField(
+                _settingsField(
+                  label: t('Full Name', 'ሙሉ ስም'),
                   controller: _settingsNameController,
-                  decoration: InputDecoration(
-                    prefixIcon: const Icon(Icons.person),
-                    hintText: t('Admin Full Name', 'የአስተዳዳሪ ሙሉ ስም'),
-                  ),
+                  icon: Icons.person,
+                  hint: t('Admin Full Name', 'የአስተዳዳሪ ሙሉ ስም'),
                 ),
                 const SizedBox(height: 14),
 
                 // Email Address
-                Text(t('Email Address', 'ኢሜይል አድራሻ'),
-                    style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
-                const SizedBox(height: 6),
-                TextField(
+                _settingsField(
+                  label: t('Email Address', 'ኢሜይል አድራሻ'),
                   controller: _settingsEmailController,
-                  keyboardType: TextInputType.emailAddress,
-                  decoration: const InputDecoration(
-                    prefixIcon: Icon(Icons.email),
-                    hintText: 'admin@equb.et',
-                  ),
+                  icon: Icons.email,
+                  hint: 'admin@equb.et',
+                  type: TextInputType.emailAddress,
                 ),
                 const SizedBox(height: 14),
 
                 // Username
-                Text(t('Username', 'ተጠቃሚ ስም'),
-                    style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
-                const SizedBox(height: 6),
-                TextField(
+                _settingsField(
+                  label: t('Username', 'ተጠቃሚ ስም'),
                   controller: _settingsUsernameController,
-                  decoration: const InputDecoration(
-                    prefixIcon: Icon(Icons.alternate_email),
-                    hintText: 'admin_username',
-                  ),
+                  icon: Icons.alternate_email,
+                  hint: 'admin_username',
                 ),
                 const SizedBox(height: 14),
 
                 // Phone Number
-                Text(t('Phone Number', 'ስልክ ቁጥር'),
-                    style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
-                const SizedBox(height: 6),
-                TextField(
+                _settingsField(
+                  label: t('Phone Number', 'ስልክ ቁጥር'),
                   controller: _settingsPhoneController,
-                  keyboardType: TextInputType.phone,
-                  decoration: const InputDecoration(
-                    prefixIcon: Icon(Icons.phone),
-                    hintText: '09XXXXXXXX',
-                  ),
+                  icon: Icons.phone,
+                  hint: '09XXXXXXXX',
+                  type: TextInputType.phone,
                 ),
                 const SizedBox(height: 14),
 
                 // Address
-                Text(t('Address', 'አድራሻ'),
-                    style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
-                const SizedBox(height: 6),
-                TextField(
+                _settingsField(
+                  label: t('Address', 'አድራሻ'),
                   controller: _settingsAddressController,
-                  decoration: InputDecoration(
-                    prefixIcon: const Icon(Icons.location_on),
-                    hintText: t('Addis Ababa, Ethiopia', 'አዲስ አበባ፣ ኢትዮጵያ'),
-                  ),
+                  icon: Icons.location_on,
+                  hint: t('Addis Ababa, Ethiopia', 'አዲስ አበባ፣ ኢትዮጵያ'),
                 ),
-                const SizedBox(height: 14),
+                const SizedBox(height: 20),
 
-                // Password & Confirm Password
-                Text(t('New Password (leave blank to keep current)',
-                       'አዲስ የይለፍ ቃል (አሁን ያለውን ለማቆየት ባዶ ይተውት)'),
-                    style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
-                const SizedBox(height: 6),
-                TextField(
-                  controller: _settingsPasswordController,
-                  obscureText: _obscureSettingsPass,
-                  decoration: InputDecoration(
-                    prefixIcon: const Icon(Icons.lock_outline),
-                    hintText: '••••••••',
-                    suffixIcon: IconButton(
-                      icon: Icon(_obscureSettingsPass ? Icons.visibility_off : Icons.visibility),
-                      onPressed: () => setState(() => _obscureSettingsPass = !_obscureSettingsPass),
+                // Password section divider
+                Row(children: [
+                  Expanded(
+                      child: Divider(color: _levelColor.withOpacity(0.3))),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 10),
+                    child: Text(
+                      t('Change Password', 'የይለፍ ቃል ቀይር'),
+                      style: TextStyle(
+                          fontSize: 12,
+                          color: _levelColor,
+                          fontWeight: FontWeight.w600),
                     ),
                   ),
+                  Expanded(
+                      child: Divider(color: _levelColor.withOpacity(0.3))),
+                ]),
+                const SizedBox(height: 14),
+
+                // New Password
+                _settingsField(
+                  label: t('New Password (leave blank to keep current)',
+                      'አዲስ የይለፍ ቃል (ባዶ ከተወ አሁን ያለው ይቆያል)'),
+                  controller: _settingsPasswordController,
+                  icon: Icons.lock_outline,
+                  hint: '••••••••',
+                  obscure: _obscureSettingsPass,
+                  toggleObscure: () =>
+                      setState(() => _obscureSettingsPass = !_obscureSettingsPass),
                 ),
                 const SizedBox(height: 14),
 
-                Text(t('Confirm New Password', 'አዲሱን የይለፍ ቃል ድገም'),
-                    style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
-                const SizedBox(height: 6),
-                TextField(
+                // Confirm Password
+                _settingsField(
+                  label: t('Confirm New Password', 'አዲሱን የይለፍ ቃል ድገም'),
                   controller: _settingsConfirmPasswordController,
-                  obscureText: _obscureSettingsPass,
-                  decoration: const InputDecoration(
-                    prefixIcon: Icon(Icons.lock_clock),
-                    hintText: '••••••••',
-                  ),
+                  icon: Icons.lock_clock,
+                  hint: '••••••••',
+                  obscure: _obscureSettingsPass,
                 ),
                 const SizedBox(height: 24),
 
                 // Save Button
                 SizedBox(
                   width: double.infinity,
-                  height: 50,
+                  height: 52,
                   child: ElevatedButton.icon(
                     onPressed: _settingsSaving ? null : _saveAdminSettings,
                     style: ElevatedButton.styleFrom(
                       backgroundColor: _levelColor,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12)),
+                      elevation: 3,
                     ),
                     icon: _settingsSaving
                         ? const SizedBox(
                             width: 20,
                             height: 20,
-                            child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
+                            child: CircularProgressIndicator(
+                                color: Colors.white, strokeWidth: 2),
                           )
-                        : const Icon(Icons.save, color: Colors.white),
+                        : const Icon(Icons.save_rounded, color: Colors.white),
                     label: Text(
                       _settingsSaving
-                          ? t('Saving Changes…', 'ለውጦችን በማስቀመጥ ላይ…')
+                          ? t('Saving…', 'እያስቀመጠ ነው…')
                           : t('Save Account Settings', 'የመለያ መቼቶችን አስቀምጥ'),
-                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: Colors.white),
+                      style: const TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 15,
+                          color: Colors.white),
                     ),
                   ),
                 ),
               ],
             ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  // Helper for uniform settings form field
+  Widget _settingsField({
+    required String label,
+    required TextEditingController controller,
+    required IconData icon,
+    String hint = '',
+    TextInputType type = TextInputType.text,
+    bool obscure = false,
+    VoidCallback? toggleObscure,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label,
+            style: const TextStyle(
+                fontWeight: FontWeight.w600, fontSize: 13)),
+        const SizedBox(height: 6),
+        TextField(
+          controller: controller,
+          keyboardType: type,
+          obscureText: obscure,
+          decoration: InputDecoration(
+            prefixIcon: Icon(icon),
+            hintText: hint.isNotEmpty ? hint : label,
+            suffixIcon: toggleObscure != null
+                ? IconButton(
+                    icon: Icon(
+                        obscure ? Icons.visibility_off : Icons.visibility),
+                    onPressed: toggleObscure,
+                  )
+                : null,
           ),
         ),
       ],
@@ -1741,33 +2099,628 @@ class _LevelDashboardScreenState extends State<LevelDashboardScreen>
     }
 
     final auth = context.read<AuthProvider>();
-    final adminId = widget.adminId.isNotEmpty
-        ? widget.adminId
-        : (widget.data['adminId'] ?? widget.data['id'] ?? auth.user?['adminId'] ?? auth.user?['uid'] ?? 'super_admin').toString();
+    // Resolve the real admin doc ID — try all sources
+    String adminId = _resolvedAdminId;
+    if (adminId.isEmpty) {
+      adminId = (auth.user?['adminId'] ?? auth.user?['id'] ??
+              auth.user?['uid'] ?? widget.adminId)
+          .toString()
+          .trim();
+    }
+    // If still empty, try to find by email from backend
+    if (adminId.isEmpty) {
+      final email = _settingsEmailController.text.trim().toLowerCase();
+      if (email.isNotEmpty) {
+        final found = await RoleManagementService.findAdmin(email);
+        if (found != null) {
+          adminId = (found['adminId'] ?? found['id'] ?? '').toString();
+        }
+      }
+    }
+    if (adminId.isEmpty) {
+      setState(() => _settingsSaving = false);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(t(
+            'Cannot identify admin account. Please log out and log back in.',
+            'የአስተዳዳሪ መለያ ማወቅ አልተቻለም። ይውጡና ዳግም ይግቡ።',
+          )),
+          backgroundColor: AppColors.error,
+        ));
+      }
+      return;
+    }
     final ok = await RoleManagementService.updateAdmin(adminId, updates);
 
     setState(() => _settingsSaving = false);
     if (!mounted) return;
 
     if (ok) {
+      // Refresh auth user map so future _resolvedAdminId calls work
       if (auth.user != null) {
         auth.refreshUser({
           ...auth.user!,
           ...updates,
+          'adminId': adminId,
+          'id': adminId,
         });
       }
+      // Update settings controllers to reflect saved values
+      setState(() {
+        _settingsNameController.text =
+            (updates['fullName'] ?? _settingsNameController.text).toString();
+        _settingsPasswordController.clear();
+        _settingsConfirmPasswordController.clear();
+      });
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(t('Admin settings saved successfully.', 'የአስተዳዳሪ መቼቶች በተሳካ ሁኔታ ተቀምጠዋል።')),
+        content: Text(t(
+          '✅ Admin settings saved successfully.',
+          '✅ የአስተዳዳሪ መቼቶች በተሳካ ሁኔታ ተቀምጠዋል።',
+        )),
         backgroundColor: AppColors.success,
+        duration: const Duration(seconds: 3),
       ));
-      _settingsPasswordController.clear();
-      _settingsConfirmPasswordController.clear();
       widget.onRefresh();
     } else {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
         content: Text(t('Failed to save settings.', 'መቼቶችን ማስቀመጥ አልተቻለም።')),
         backgroundColor: AppColors.error,
       ));
+    }
+  }
+
+  Widget _paymentFilterChip(String statusKey, String label, Color chipColor) {
+    final selected = _paymentFilterStatus == statusKey;
+    return ChoiceChip(
+      label: Text(label, style: TextStyle(color: selected ? Colors.white : AppColors.textPrimary, fontWeight: FontWeight.bold, fontSize: 12)),
+      selected: selected,
+      selectedColor: chipColor,
+      backgroundColor: Colors.grey.shade100,
+      onSelected: (val) {
+        if (val) setState(() => _paymentFilterStatus = statusKey);
+      },
+    );
+  }
+
+  Widget _buildPaymentsTab() {
+    final filtered = _levelPayments.where((p) {
+      if (_paymentFilterStatus == 'all') return true;
+      final st = (p['status'] ?? 'pending_verification').toString();
+      if (_paymentFilterStatus == 'pending_verification') {
+        return st == 'pending_verification' || st == 'pending';
+      }
+      return st == _paymentFilterStatus;
+    }).toList();
+
+    return Column(
+      children: [
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+          color: Colors.white,
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: [
+                _paymentFilterChip('pending_verification', t('Pending', 'በመጠበቅ ላይ'), Colors.orange.shade800),
+                const SizedBox(width: 8),
+                _paymentFilterChip('verified', t('Verified', 'ተረጋግጧል'), Colors.green),
+                const SizedBox(width: 8),
+                _paymentFilterChip('rejected', t('Rejected', 'ተሰርዟል'), Colors.red),
+                const SizedBox(width: 8),
+                _paymentFilterChip('all', t('All Payments', 'ሁሉም'), _levelColor),
+              ],
+            ),
+          ),
+        ),
+        Expanded(
+          child: filtered.isEmpty
+              ? Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(Icons.payments_outlined, size: 54, color: Colors.grey.shade400),
+                      const SizedBox(height: 12),
+                      Text(
+                        t('No payment records found', 'ምንም የማረጋገጫ ክፍያ ጥያቄ የለም'),
+                        style: const TextStyle(fontSize: 14, color: AppColors.textSecondary, fontWeight: FontWeight.bold),
+                      ),
+                    ],
+                  ),
+                )
+              : RefreshIndicator(
+                  onRefresh: _loadData,
+                  child: ListView.builder(
+                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 100),
+                    itemCount: filtered.length,
+                    itemBuilder: (context, index) {
+                      final item = filtered[index];
+                      final pId = (item['paymentId'] ?? item['id'] ?? '').toString();
+                      final fullName = (item['fullName'] ?? item['name'] ?? 'Equb Member').toString();
+                      final email = (item['email'] ?? '').toString();
+                      final nationalId = (item['nationalId'] ?? item['uniqueId'] ?? '—').toString();
+                      final bankName = (item['bankName'] ?? item['paymentMethod'] ?? 'CBE').toString();
+                      final refNum = (item['referenceNumber'] ?? item['reference'] ?? '—').toString();
+                      final amount = (item['amount'] ?? 0).toString();
+                      final status = (item['status'] ?? 'pending_verification').toString();
+
+                      Color statusColor = status == 'verified'
+                          ? Colors.green
+                          : (status == 'rejected' ? Colors.red : Colors.orange.shade800);
+
+                      return Container(
+                        margin: const EdgeInsets.only(bottom: 14),
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(18),
+                          border: Border.all(color: _levelColor.withOpacity(0.3), width: 1.2),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withOpacity(0.03),
+                              blurRadius: 8,
+                              offset: const Offset(0, 3),
+                            ),
+                          ],
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                                  decoration: BoxDecoration(
+                                    color: statusColor,
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                  child: Text(
+                                    status.toUpperCase().replaceAll('_', ' '),
+                                    style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
+                                  ),
+                                ),
+                                const Spacer(),
+                                Text(
+                                  '$amount ETB',
+                                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: _levelColor),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 10),
+                            Text(
+                              fullName,
+                              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              'Email: $email  •  ID: #$nationalId',
+                              style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
+                            ),
+                            const Divider(height: 18),
+                            Row(
+                              children: [
+                                const Icon(Icons.account_balance, size: 16, color: AppColors.textSecondary),
+                                const SizedBox(width: 6),
+                                Text(
+                                  'Bank: $bankName',
+                                  style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+                                ),
+                                const Spacer(),
+                                Text(
+                                  'Ref: $refNum',
+                                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.blue.shade800),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 12),
+                            Row(
+                              children: [
+                                OutlinedButton.icon(
+                                  onPressed: () => _showProofDialog(item),
+                                  icon: const Icon(Icons.remove_red_eye_rounded, size: 16),
+                                  label: Text(t('View Proof', 'ደረሰኝ ተመልከት')),
+                                  style: OutlinedButton.styleFrom(
+                                    foregroundColor: Colors.blue.shade800,
+                                    side: BorderSide(color: Colors.blue.shade800),
+                                  ),
+                                ),
+                                const Spacer(),
+                                if (status == 'pending_verification' || status == 'pending') ...[
+                                  IconButton(
+                                    icon: const Icon(Icons.cancel_rounded, color: Colors.red, size: 28),
+                                    onPressed: () => _showRejectReasonDialog(pId),
+                                    tooltip: t('Reject Payment', 'ክፍያን ሰርዝ'),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  ElevatedButton.icon(
+                                    onPressed: () => _verifyPayment(pId, 'verified'),
+                                    icon: const Icon(Icons.check_circle_rounded, size: 18),
+                                    label: Text(t('Approve', 'አረጋግጥ')),
+                                    style: ElevatedButton.styleFrom(
+                                      backgroundColor: Colors.green,
+                                      foregroundColor: Colors.white,
+                                    ),
+                                  ),
+                                ],
+                              ],
+                            ),
+                          ],
+                        ),
+                      );
+                    },
+                  ),
+                ),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _verifyPayment(String paymentId, String status, {String reason = ''}) async {
+    setState(() => _loading = true);
+    final success = await RoleManagementService.verifyPayment(
+      paymentId: paymentId,
+      status: status,
+      rejectionReason: reason,
+      adminId: _resolvedAdminId.isNotEmpty ? _resolvedAdminId : 'admin_${widget.level}',
+      level: widget.level,
+    );
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            success
+                ? (status == 'verified' ? '✅ Payment Verified & Member Contribution Updated!' : '❌ Payment Request Rejected.')
+                : 'Failed to update payment status.',
+          ),
+          backgroundColor: status == 'verified' ? Colors.green : Colors.red,
+        ),
+      );
+      _loadData();
+    }
+  }
+
+  void _showProofDialog(Map<String, dynamic> item) {
+    final base64Str = (item['proofScreenshotBase64'] ?? '').toString();
+
+    showDialog(
+      context: context,
+      builder: (ctx) => Dialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(
+                children: [
+                  const Icon(Icons.receipt_long, color: AppColors.primary),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      _isAmharic ? 'የክፍያ ደረሰኝ ማረጋገጫ' : 'Bank Receipt Proof Inspection',
+                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.close),
+                    onPressed: () => Navigator.pop(ctx),
+                  ),
+                ],
+              ),
+              const Divider(),
+              if (base64Str.isNotEmpty && base64Str.contains('base64,')) ...[
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(12),
+                  child: Image.memory(
+                    base64Decode(base64Str.split('base64,').last),
+                    fit: BoxFit.contain,
+                    errorBuilder: (_, __, ___) => const Center(
+                      child: Text('Error loading screenshot image'),
+                    ),
+                  ),
+                ),
+              ] else ...[
+                Container(
+                  height: 200,
+                  color: Colors.grey.shade200,
+                  child: const Center(
+                    child: Text('No screenshot preview available'),
+                  ),
+                ),
+              ],
+              const SizedBox(height: 14),
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: Colors.green.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: Colors.green.withOpacity(0.3)),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.verified_user_rounded, color: Colors.green, size: 20),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'Security Checksum: ${item['proofHash'] != null ? (item['proofHash'].toString().substring(0, 16) + '...') : 'SHA-256 Validated'}',
+                        style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.green),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _showRejectReasonDialog(String paymentId) {
+    final reasonController = TextEditingController();
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Text(_isAmharic ? 'ክፍያውን ለመሰረዝ ምክንያት ያስገቡ' : 'Specify Rejection Reason'),
+        content: TextField(
+          controller: reasonController,
+          decoration: InputDecoration(
+            hintText: _isAmharic ? 'ለምሳሌ: የተሳሳተ ደረሰኝ ወይም አልተከፈለም' : 'e.g. Invalid reference code or wrong receipt',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: Text(_isAmharic ? 'ሰርዝ' : 'Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(ctx);
+              _verifyPayment(paymentId, 'rejected', reason: reasonController.text.trim());
+            },
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            child: Text(_isAmharic ? 'አረጋግጥና ሰርዝ' : 'Reject Payment'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // RESET DRAW CYCLE
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  /// Resets every member's hasWon flag for this level so the next draw cycle
+  /// starts fresh. Firestore-first, then local state update.
+  Future<void> _resetDrawCycle() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(children: [
+          const Icon(Icons.refresh_rounded, color: Colors.orange, size: 28),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              t('Reset Draw Cycle?', 'የእጣ ዑደትን ዳግም ጀምር?'),
+              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+            ),
+          ),
+        ]),
+        content: Text(
+          t(
+            'This will clear the "hasWon" flag for ALL members in $_levelLabel Level, '
+            'making everyone eligible again for the next cycle.\n\nDraw history records are kept.',
+            'ይህ ለ$_levelLabel ደረጃ ሁሉም አባሎች "አሸናፊ" ሁኔታን ያጸዳ ሲሆን ሁሉም ለቀጣዩ ዙር ብቁ ይሆናሉ።\n\nየእጣ ታሪክ ይቀራል።',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text(t('Cancel', 'ሰርዝ')),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.orange),
+            child: Text(
+              t('Reset Cycle', 'ዑደቱን ዳግም ጀምር'),
+              style: const TextStyle(color: Colors.white),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    setState(() => _loading = true);
+
+    try {
+      final db = FirebaseFirestore.instance;
+      final batch = db.batch();
+      for (final p in _participants) {
+        final uid = (p['userId'] ?? p['id'] ?? '').toString();
+        if (uid.isEmpty) continue;
+        batch.update(db.collection('users').doc(uid), {
+          'hasWon': false,
+          'status': 'active',
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+        p['hasWon'] = false;
+        p['status'] = 'active';
+      }
+      await batch.commit();
+    } catch (e) {
+      // Fallback: update one-by-one if batch fails
+      for (final p in _participants) {
+        final uid = (p['userId'] ?? p['id'] ?? '').toString();
+        if (uid.isEmpty) continue;
+        try {
+          await RoleManagementService.activateUser(uid);
+          p['hasWon'] = false;
+          p['status'] = 'active';
+        } catch (_) {}
+      }
+    }
+
+    if (!mounted) return;
+    setState(() => _loading = false);
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(t(
+        '✅ Draw cycle reset! All ${_participants.length} members are now eligible.',
+        '✅ የእጣ ዑደት ዳግም ጀምሯል! ሁሉም ${_participants.length} አባሎች ብቁ ናቸው።',
+      )),
+      backgroundColor: Colors.orange,
+    ));
+    widget.onRefresh();
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // EXPORT MEMBERS (CSV)
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  void _exportMembersCSV() {
+    if (_participants.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(t('No members to export.', 'ወደ ውጪ ለመላክ አባሎች የሉም።')),
+        backgroundColor: AppColors.warning,
+      ));
+      return;
+    }
+
+    // Build CSV content
+    final buffer = StringBuffer();
+    buffer.writeln('No,Full Name,Email,Phone,Unique ID,Status,Has Won,Level');
+    for (int i = 0; i < _participants.length; i++) {
+      final p = _participants[i];
+      final name = (p['fullName'] ?? '${p['firstName'] ?? ''} ${p['lastName'] ?? ''}'.trim()).toString().replaceAll(',', ' ');
+      final email = (p['email'] ?? '').toString();
+      final phone = (p['phoneNumber'] ?? '').toString();
+      final uid = (p['uniqueId'] ?? '').toString();
+      final status = (p['status'] ?? 'active').toString();
+      final hasWon = p['hasWon'] == true ? 'Yes' : 'No';
+      buffer.writeln('${i + 1},$name,$email,$phone,$uid,$status,$hasWon,${widget.level}');
+    }
+
+    // Show the CSV in a dialog so the admin can copy it
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(children: [
+          Icon(Icons.download_rounded, color: _levelColor),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              t('Export Members — $_levelLabel Level', 'አባሎችን ወደ ውጪ ላክ — $_levelLabel'),
+              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+            ),
+          ),
+        ]),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                t('${_participants.length} members exported. Copy and paste into Excel or a text file.',
+                  '${_participants.length} አባሎች ተላልፈዋል። ወደ Excel ወይም ጽሑፍ ፋይል ቅዳ።'),
+                style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
+              ),
+              const SizedBox(height: 10),
+              Container(
+                constraints: const BoxConstraints(maxHeight: 260),
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade100,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.grey.shade300),
+                ),
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.all(10),
+                  child: SelectableText(
+                    buffer.toString(),
+                    style: const TextStyle(fontFamily: 'monospace', fontSize: 11),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: Text(t('Close', 'ዝጋ')),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _confirmDeleteHistory(Map<String, dynamic> draw) async {
+    final drawId = (draw['drawId'] ?? draw['id'] ?? '').toString();
+    final winnerName = (draw['winnerName'] ?? draw['fullName'] ?? 'Winner').toString();
+    final winnerId = (draw['winnerId'] ?? draw['userId'] ?? '').toString();
+    final winnerUniqueId = (draw['winnerUniqueId'] ?? draw['uniqueId'] ?? '').toString();
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(
+          children: [
+            const Icon(Icons.warning_amber_rounded, color: Colors.red, size: 28),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                _isAmharic ? 'የእጣ ታሪክ መዝገብ ይሰረዝ?' : 'Delete Draw History Record?',
+                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+              ),
+            ),
+          ],
+        ),
+        content: Text(
+          _isAmharic
+              ? 'ለ "$winnerName" የተመዘገበውን የስዕል ታሪክ በቋሚነት ለመሰረዝ እርግጠኛ ነዎት? ይህ እርምጃ የተጠቃሚውን አሸናፊነት ደረጃ ዳግም ያስጀምራል።'
+              : 'Are you sure you want to delete the draw history record for "$winnerName"? This will reset the user\'s win status so they become eligible for future draws again.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text(_isAmharic ? 'ሰርዝ' : 'Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            child: Text(_isAmharic ? 'አረጋግጥና ሰርዝ' : 'Delete Record'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true) {
+      setState(() => _loading = true);
+      final ok = await RoleManagementService.deleteDrawHistory(
+        drawId: drawId,
+        winnerId: winnerId,
+        winnerUniqueId: winnerUniqueId,
+        level: widget.level,
+      );
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              ok
+                  ? (_isAmharic ? '✅ የስዕል ታሪክ መዝገብ በተሳካ ሁኔታ ተሰርዟል!' : '✅ Draw history record deleted successfully!')
+                  : (_isAmharic ? '❌ መዝገቡን ማስወገድ አልተቻለም' : 'Failed to delete draw record.'),
+            ),
+            backgroundColor: ok ? Colors.green : Colors.red,
+          ),
+        );
+        _loadData();
+      }
     }
   }
 }

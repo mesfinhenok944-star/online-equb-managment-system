@@ -1,11 +1,14 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:go_router/go_router.dart';
 import '../../config/theme.dart';
 import '../../services/role_management_service.dart';
 import '../../utils/constants.dart';
 import '../../widgets/smart_back_button.dart';
+import '../../widgets/offline_banner.dart';
+import '../../widgets/page_header_banner.dart';
 
 class PaymentScreen extends StatefulWidget {
   final String equbId;
@@ -268,10 +271,26 @@ class _PaymentScreenState extends State<PaymentScreen> {
         backgroundColor: _currentLevelColor,
         foregroundColor: Colors.white,
         elevation: 0,
+        bottom: PreferredSize(
+          preferredSize: const Size.fromHeight(64),
+          child: PageHeaderBanner(
+            color: _currentLevelColor,
+            icon: Icons.payments_rounded,
+            phrases: PageHeaderBanner.paymentPhrases,
+            staticTitle: isAmharic
+                ? '${_selectedLevel.toUpperCase()} ደረጃ — ክፍያ ቅጽ'
+                : '${_selectedLevel.toUpperCase()} Level — Payment Form',
+            height: 64,
+          ),
+        ),
       ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(20),
-        child: Form(
+      body: Column(
+        children: [
+          const OfflineBanner(),
+          Expanded(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(20),
+              child: Form(
           key: _formKey,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -374,33 +393,72 @@ class _PaymentScreenState extends State<PaymentScreen> {
                     // First Name
                     TextFormField(
                       controller: _firstNameController,
+                      inputFormatters: [
+                        FilteringTextInputFormatter.allow(
+                            RegExp(r'[a-zA-Z\u1200-\u137F ]'))
+                      ],
                       decoration: InputDecoration(
                         labelText: isAmharic ? 'ስም (First Name) *' : 'First Name *',
                         prefixIcon: const Icon(Icons.person),
                       ),
-                      validator: (v) => (v == null || v.trim().isEmpty) ? 'Required' : null,
+                      validator: (v) {
+                        if (v == null || v.trim().isEmpty) {
+                          return isAmharic ? 'ስም ያስፈልጋል' : 'First name required';
+                        }
+                        if (RegExp(r'[0-9]').hasMatch(v)) {
+                          return isAmharic ? 'ቁጥር አይፈቀድም' : 'Name must not contain numbers';
+                        }
+                        if (v.trim().length < 2) {
+                          return isAmharic ? 'ቢያንስ 2 ቁምፊዎች' : 'Min 2 characters';
+                        }
+                        return null;
+                      },
                     ),
                     const SizedBox(height: 12),
 
                     // Middle Name
                     TextFormField(
                       controller: _middleNameController,
+                      inputFormatters: [
+                        FilteringTextInputFormatter.allow(
+                            RegExp(r'[a-zA-Z\u1200-\u137F ]'))
+                      ],
                       decoration: InputDecoration(
                         labelText: isAmharic ? 'የአባት ስም (Father Name) *' : 'Father Name *',
                         prefixIcon: const Icon(Icons.person_outline),
                       ),
-                      validator: (v) => (v == null || v.trim().isEmpty) ? 'Required' : null,
+                      validator: (v) {
+                        if (v == null || v.trim().isEmpty) {
+                          return isAmharic ? 'የአባት ስም ያስፈልጋል' : 'Father name required';
+                        }
+                        if (RegExp(r'[0-9]').hasMatch(v)) {
+                          return isAmharic ? 'ቁጥር አይፈቀድም' : 'No numbers in name';
+                        }
+                        return null;
+                      },
                     ),
                     const SizedBox(height: 12),
 
                     // Last Name
                     TextFormField(
                       controller: _lastNameController,
+                      inputFormatters: [
+                        FilteringTextInputFormatter.allow(
+                            RegExp(r'[a-zA-Z\u1200-\u137F ]'))
+                      ],
                       decoration: InputDecoration(
                         labelText: isAmharic ? 'የአያት ስም (Grandfather Name) *' : 'Grandfather Name *',
                         prefixIcon: const Icon(Icons.person_outline),
                       ),
-                      validator: (v) => (v == null || v.trim().isEmpty) ? 'Required' : null,
+                      validator: (v) {
+                        if (v == null || v.trim().isEmpty) {
+                          return isAmharic ? 'የአያት ስም ያስፈልጋል' : 'Grandfather name required';
+                        }
+                        if (RegExp(r'[0-9]').hasMatch(v)) {
+                          return isAmharic ? 'ቁጥር አይፈቀድም' : 'No numbers in name';
+                        }
+                        return null;
+                      },
                     ),
                     const SizedBox(height: 12),
 
@@ -412,7 +470,18 @@ class _PaymentScreenState extends State<PaymentScreen> {
                         labelText: isAmharic ? 'ኢሜይል (Email Address) *' : 'Email Address *',
                         prefixIcon: const Icon(Icons.email),
                       ),
-                      validator: (v) => (v == null || !v.contains('@')) ? 'Valid email required' : null,
+                      validator: (v) {
+                        if (v == null || v.trim().isEmpty) {
+                          return isAmharic ? 'ኢሜይል ያስፈልጋል' : 'Email required';
+                        }
+                        final rx = RegExp(r'^[\w.\-]+@[\w\-]+\.[a-zA-Z]{2,}$');
+                        if (!rx.hasMatch(v.trim())) {
+                          return isAmharic
+                              ? 'ትክክለኛ ኢሜይል ያስገቡ (user@domain.com)'
+                              : 'Enter valid email (user@domain.com)';
+                        }
+                        return null;
+                      },
                     ),
                     const SizedBox(height: 12),
 
@@ -424,7 +493,15 @@ class _PaymentScreenState extends State<PaymentScreen> {
                         prefixIcon: const Icon(Icons.badge),
                         hintText: 'e.g. EQ-100234',
                       ),
-                      validator: (v) => (v == null || v.trim().isEmpty) ? 'Required' : null,
+                      validator: (v) {
+                        if (v == null || v.trim().isEmpty) {
+                          return isAmharic ? 'መታወቂያ ያስፈልጋል' : 'Unique ID required';
+                        }
+                        if (v.trim().length < 4) {
+                          return isAmharic ? 'ቢያንስ 4 ቁምፊዎች' : 'Min 4 characters';
+                        }
+                        return null;
+                      },
                     ),
                   ],
                 ),
@@ -514,13 +591,25 @@ class _PaymentScreenState extends State<PaymentScreen> {
                     // Amount
                     TextFormField(
                       controller: _amountController,
-                      keyboardType: TextInputType.number,
+                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                      inputFormatters: [
+                        FilteringTextInputFormatter.allow(RegExp(r'[0-9.]'))
+                      ],
                       decoration: const InputDecoration(
                         labelText: 'Payment Amount (ETB) *',
                         prefixIcon: Icon(Icons.payments),
                         suffixText: 'ETB',
                       ),
-                      validator: (v) => (v == null || v.trim().isEmpty) ? 'Enter amount' : null,
+                      validator: (v) {
+                        if (v == null || v.trim().isEmpty) {
+                          return 'Enter payment amount';
+                        }
+                        final amt = double.tryParse(v.trim());
+                        if (amt == null || amt <= 0) {
+                          return 'Enter a valid amount greater than 0';
+                        }
+                        return null;
+                      },
                     ),
                     const SizedBox(height: 12),
 
@@ -532,7 +621,15 @@ class _PaymentScreenState extends State<PaymentScreen> {
                         prefixIcon: Icon(Icons.receipt_long),
                         hintText: 'e.g. FT240987654321',
                       ),
-                      validator: (v) => (v == null || v.trim().isEmpty) ? 'Enter transaction reference #' : null,
+                      validator: (v) {
+                        if (v == null || v.trim().isEmpty) {
+                          return 'Transaction reference number is required';
+                        }
+                        if (v.trim().length < 6) {
+                          return 'Reference must be at least 6 characters';
+                        }
+                        return null;
+                      },
                     ),
                   ],
                 ),
@@ -674,6 +771,9 @@ class _PaymentScreenState extends State<PaymentScreen> {
           ),
         ),
       ),
+    ),
+  ],
+),
     );
   }
 

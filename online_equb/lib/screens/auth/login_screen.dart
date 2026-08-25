@@ -4,7 +4,9 @@ import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 import '../../config/theme.dart';
 import '../../providers/auth_provider.dart';
+import '../../services/api_service.dart';
 import '../../utils/constants.dart';
+import '../../widgets/page_header_banner.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -42,6 +44,80 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
+  void _showServerDialog(BuildContext ctx) {
+    final ctrl = TextEditingController(
+        text: ApiService.currentBaseUrl.replaceAll('/api/v1', ''));
+    showDialog(
+      context: ctx,
+      builder: (_) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Row(children: [
+          Icon(Icons.dns_rounded, color: AppColors.primary),
+          SizedBox(width: 10),
+          Text('Server / Backend URL',
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+        ]),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Enter your server IP address.\n'
+              'Example: http://192.168.1.134:8080\n\n'
+              'Leave blank to use Firebase directly\n(no server needed).',
+              style: TextStyle(fontSize: 13),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: ctrl,
+              keyboardType: TextInputType.url,
+              decoration: const InputDecoration(
+                hintText: 'http://192.168.x.x:8080',
+                prefixIcon: Icon(Icons.http),
+                border: OutlineInputBorder(),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () async {
+              await ApiService.clearServerUrl();
+              Navigator.pop(ctx);
+              if (mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                  content: Text('Server URL cleared — using Firebase directly'),
+                  backgroundColor: Colors.orange,
+                ));
+              }
+            },
+            child: const Text('Clear', style: TextStyle(color: Colors.orange)),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              final url = ctrl.text.trim();
+              if (url.isNotEmpty) {
+                await ApiService.setServerUrl(url);
+              } else {
+                await ApiService.clearServerUrl();
+              }
+              if (ctx.mounted) Navigator.pop(ctx);
+              if (mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                  content: Text(url.isNotEmpty
+                      ? '✅ Server set to $url'
+                      : '✅ Using Firebase directly'),
+                  backgroundColor: AppColors.success,
+                ));
+              }
+            },
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+  }
+
   void _fillCredentials(String email, String pass) {
     setState(() {
       _email.text = email;
@@ -59,6 +135,23 @@ class _LoginScreenState extends State<LoginScreen> {
       appBar: AppBar(
         title: Text(isAmharic ? 'መግቢያ ገጽ' : 'Account Login'),
         leading: const SmartBackButton(),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.dns_rounded),
+            tooltip: 'Server Settings',
+            onPressed: () => _showServerDialog(context),
+          ),
+        ],
+        bottom: PreferredSize(
+          preferredSize: const Size.fromHeight(64),
+          child: PageHeaderBanner(
+            color: AppColors.primary,
+            icon: Icons.login_rounded,
+            phrases: PageHeaderBanner.equbPhrases,
+            staticTitle: isAmharic ? 'ወደ ኦንላይን እቁብ ይግቡ' : 'Sign in to Online Equb',
+            height: 64,
+          ),
+        ),
       ),
       body: SafeArea(
         child: SingleChildScrollView(

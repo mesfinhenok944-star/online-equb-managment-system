@@ -11,15 +11,77 @@ import 'package:shared_preferences/shared_preferences.dart';
 // ─────────────────────────────────────────────────────────────────────────────
 
 class ApiService {
+  // ── Server URL ─────────────────────────────────────────────────────────
+  // Priority:
+  //   1. OVERRIDE — set at runtime when user configures server IP
+  //   2. Android emulator — 10.0.2.2 maps to host machine localhost
+  //   3. Real device / desktop — uses the LAN IP stored in prefs, or
+  //      falls back to localhost (which only works if on same machine)
+  static String? _overrideBaseUrl;
+
   static String get _base {
+    if (_overrideBaseUrl != null && _overrideBaseUrl!.isNotEmpty) {
+      return _overrideBaseUrl!;
+    }
     if (kIsWeb) return 'http://localhost:8080/api/v1';
     try {
-      if (Platform.isAndroid) return 'http://10.0.2.2:8080/api/v1';
+      if (Platform.isAndroid) {
+        // Real device: try the stored server IP first
+        // The emulator check is deferred to runtime via _cachedBase
+        return _cachedBase ?? 'http://10.0.2.2:8080/api/v1';
+      }
     } catch (_) {}
     return 'http://localhost:8080/api/v1';
   }
 
+  static String? _cachedBase;
+
+  /// Call once at app start to detect the correct server URL.
+  /// On a real Android device, the backend must be reachable via its
+  /// LAN IP (e.g. 192.168.1.x) not the emulator shortcut 10.0.2.2.
+  static Future<void> detectServerUrl() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final stored = prefs.getString('server_base_url');
+      if (stored != null && stored.isNotEmpty) {
+        _cachedBase = stored;
+        return;
+      }
+    } catch (_) {}
+    // Default fallback — emulator uses 10.0.2.2, real phone needs LAN IP
+    try {
+      if (!kIsWeb && Platform.isAndroid) {
+        _cachedBase = 'http://10.0.2.2:8080/api/v1';
+      }
+    } catch (_) {}
+  }
+
+  /// Persist a custom server base URL (e.g. http://192.168.1.134:8080/api/v1)
+  /// so the app uses it on all future requests.
+  static Future<void> setServerUrl(String url) async {
+    _overrideBaseUrl = url.trimRight().replaceAll(RegExp(r'/+$'), '');
+    if (!_overrideBaseUrl!.endsWith('/api/v1')) {
+      _overrideBaseUrl = '$_overrideBaseUrl/api/v1';
+    }
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('server_base_url', _overrideBaseUrl!);
+    } catch (_) {}
+  }
+
+  static Future<void> clearServerUrl() async {
+    _overrideBaseUrl = null;
+    _cachedBase = null;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove('server_base_url');
+    } catch (_) {}
+  }
+
   static final _client = http.Client();
+
+  /// Returns the current effective base URL (for display purposes)
+  static String get currentBaseUrl => _base;
 
   // ── Token helpers ─────────────────────────────────────────────────────────
 
@@ -406,6 +468,19 @@ class ApiService {
       return _decodeList(res);
     } catch (_) {
       return [];
+    }
+  }
+
+  /// Delete a draw history record.
+  static Future<Map<String, dynamic>> deleteDrawHistory(String drawId, String level) async {
+    try {
+      final res = await _client.delete(
+        Uri.parse('$_base/admin/draw/$level/$drawId'),
+        headers: await _headers(),
+      );
+      return _decode(res);
+    } catch (e) {
+      return {'error': '$e'};
     }
   }
 

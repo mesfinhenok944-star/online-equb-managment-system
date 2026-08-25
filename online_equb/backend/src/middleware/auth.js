@@ -24,10 +24,29 @@ async function verifyToken(req, res, next) {
   if (token.startsWith('admin_token_')) {
     const adminId = token.replace('admin_token_', '');
     try {
+      // First try exact doc ID lookup
       const snap = await db.collection('admins').doc(adminId).get();
-      if (snap.exists && snap.data().status === 'active') {
-        req.user = { role: 'admin', uid: adminId, adminId, ...snap.data() };
+      if (snap.exists && snap.data().status !== 'deleted') {
+        req.user = { role: 'admin', uid: adminId, adminId, level: snap.data().level || 'low', ...snap.data() };
         return next();
+      }
+      // Fallback: search by adminId field, email, or username
+      const byField = await db.collection('admins')
+        .where('adminId', '==', adminId).limit(1).get();
+      if (!byField.empty && byField.docs[0].data().status !== 'deleted') {
+        const d = byField.docs[0];
+        req.user = { role: 'admin', uid: d.id, adminId: d.id, level: d.data().level || 'low', ...d.data() };
+        return next();
+      }
+      // Fallback: if adminId looks like an email, search by email
+      if (adminId.includes('@')) {
+        const byEmail = await db.collection('admins')
+          .where('email', '==', adminId.toLowerCase()).limit(1).get();
+        if (!byEmail.empty && byEmail.docs[0].data().status !== 'deleted') {
+          const d = byEmail.docs[0];
+          req.user = { role: 'admin', uid: d.id, adminId: d.id, level: d.data().level || 'low', ...d.data() };
+          return next();
+        }
       }
     } catch (_) {}
     return res.status(401).json({ error: 'Invalid admin token.' });

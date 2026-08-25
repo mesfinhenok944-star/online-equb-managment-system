@@ -1,160 +1,240 @@
+import 'dart:async';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 
-/// Amharic & Multi-Platform Text-To-Speech and Audio Service for Equb Draw Algorithm
+// ─────────────────────────────────────────────────────────────────────────────
+// SoundService  —  Smart bilingual TTS for the Ethiopian Equb wheel algorithm.
+//
+// SPINNING (all levels, plays once):
+//   "እቁቡ እየዞረ ነው — አሸናፊ እየተፈለገ ነው…"
+//   [gap]
+//   "The equb wheel is spinning — choosing the winner…"
+//   [gap]
+//   "ሁሉም ዝግጁ ይሁኑ!"
+//   [gap]
+//   "Get ready everyone!"
+//
+// WINNER (loops until Close button tapped):
+//   "🎉 አሸናፊ ተመርጧል!"
+//   [gap]
+//   "አሸናፊው [FullName] ነው"
+//   [gap]
+//   "መታወቂያ ቁጥር [ID]"
+//   [long gap]
+//   "Congratulations! The winner has been selected!"
+//   [gap]
+//   "The winner is [FullName]"
+//   [gap]
+//   "Unique ID [ID]"
+//   [long gap]
+//   ↺ repeats until stop() is called (Close button)
+//
+// Platforms:
+//   Android/iOS → flutter_tts  (am-ET preferred, en-US fallback)
+//   Linux       → Google TTS via Python3 + pw-play / spd-say fallback
+//   Web         → flutter_tts  (en-US)
+// ─────────────────────────────────────────────────────────────────────────────
 class SoundService {
   static final FlutterTts _tts = FlutterTts();
-  static bool _ttsSupported = false;
-  static bool _initialized = false;
+  static bool _ready   = false;
+  static bool _inited  = false;
+  static bool _looping = false;   // true while winner announcement loops
+  static Timer? _loopTimer;
 
-  /// Initialize TTS settings for Amharic audio output
+  // ── Initialise ────────────────────────────────────────────────────────────
   static Future<void> init() async {
-    if (_initialized) return;
-    _initialized = true;
+    if (_inited) return;
+    _inited = true;
 
-    // Desktop Linux uses python Google TTS & PipeWire audio player (pw-play)
     if (!kIsWeb && Platform.isLinux) {
-      _ttsSupported = false;
+      _ready = false;
       return;
     }
 
     try {
-      final available = await _tts.isLanguageAvailable("am-ET");
-      if (available == true) {
-        await _tts.setLanguage("am-ET");
-        _ttsSupported = true;
-      } else {
-        final amAvailable = await _tts.isLanguageAvailable("am");
-        if (amAvailable == true) {
-          await _tts.setLanguage("am");
-          _ttsSupported = true;
-        } else {
-          await _tts.setLanguage("en-US");
-          _ttsSupported = true;
+      // Try Amharic first; fall back to English
+      for (final lang in ['am-ET', 'am', 'en-US']) {
+        final ok = await _tts.isLanguageAvailable(lang);
+        if (ok == true) {
+          await _tts.setLanguage(lang);
+          break;
         }
       }
-      await _tts.setSpeechRate(0.30); // Slow & clear speech speed
       await _tts.setVolume(1.0);
-      await _tts.setPitch(1.0);
+      await _tts.setPitch(1.1);
+      await _tts.setSpeechRate(0.40);
+      _ready = true;
+      _tts.setCompletionHandler(() {});
     } catch (e) {
-      debugPrint('[SoundService Init Warning] $e');
-      _ttsSupported = false;
+      debugPrint('[SoundService] init: $e');
     }
   }
 
-  /// Play rotation click feedback sound
-  static void playClickSound() {
-    try {
-      SystemSound.play(SystemSoundType.click);
-    } catch (_) {}
+  // ── Tick click (wheel slice boundary) ─────────────────────────────────────
+  static void playTickSound() {
+    try { SystemSound.play(SystemSoundType.click); } catch (_) {}
   }
 
-  /// Speak spinning announcement during wheel rotation (Repeated 3 times slowly in Amharic):
-  /// "እቁቡ ለውጥ ነው አሁን በመዞር ላይ ነው።"
-  static Future<void> speakSpinningAnnouncement() async {
-    const textSingleAm = "እቁቡ ለውጥ ነው አሁን በመዞር ላይ ነው።";
-    const textTripleAm = "$textSingleAm . $textSingleAm . $textSingleAm.";
+  // ── Spinning announcement (all levels, plays once, fire-and-forget) ───────
+  /// Same 4 phrases for every equb level.
+  static Future<void> speakSpinningAnnouncement({String levelName = ''}) async {
+    // levelName is accepted but not spoken — universal phrases for all levels
+    final script = [
+      'እቁቡ እየዞረ ነው . አሸናፊ እየተፈለገ ነው',
+      'The equb wheel is spinning . choosing the winner',
+      'ሁሉም ዝግጁ ይሁኑ',
+      'Get ready everyone',
+    ].join(' , , ');   // double-comma = natural TTS pause between phrases
 
-    // 1. Linux Desktop: Native Google TTS via Python & PipeWire audio player
-    if (!kIsWeb && Platform.isLinux) {
-      try {
-        await _playLinuxAmharicAudio(textTripleAm);
-        return;
-      } catch (e) {
-        debugPrint('[SoundService Linux Audio Error] $e');
-        try {
-          await Process.run('spd-say', ['-r', '-20', textTripleAm]);
-          return;
-        } catch (_) {}
-      }
-    }
-
-    // 2. FlutterTTS for Android / iOS / Web
-    try {
-      await init();
-      if (_ttsSupported) {
-        await _tts.stop();
-        await _tts.setSpeechRate(0.32);
-        await _tts.speak(textTripleAm);
-      }
-    } catch (e) {
-      debugPrint('[SoundService Spinning Speech Warning] $e');
-    }
+    await _speak(script, rate: 0.42);
   }
 
-  /// Speak winner full name and ID loudly REPEATED 3 TIMES SLOWLY in Amharic:
-  /// "አሸናፊው [FULL_NAME] መታወቂያ ቁጥር [WINNER_ID] ነው!" (Repeated 3 times)
-  static Future<void> speakWinnerRepeatedThreeTimes({
+  // ── Winner announcement (loops until stop() is called) ───────────────────
+  /// Announces Amharic first, gap, then English.
+  /// Loops continuously until [stop()] is called via the Close button.
+  static Future<void> speakWinnerAnnouncement({
     required String fullName,
     required String uniqueId,
+    String levelName = '',
   }) async {
-    final cleanName = fullName.trim().isEmpty ? 'ተሳታፊ' : fullName.trim();
-    final cleanId = uniqueId.trim().isEmpty ? '-' : uniqueId.trim();
+    // Use winner data as-is — spoken exactly as stored in Firestore
+    final name = fullName.trim().isEmpty ? 'አሸናፊ' : fullName.trim();
+    final id   = uniqueId.trim().isEmpty ? '—'    : uniqueId.trim();
 
-    final sentenceAm = "አሸናፊው $cleanName መታወቂያ ቁጥር $cleanId ነው።";
-    final tripleAnnouncementAm = "$sentenceAm . $sentenceAm . $sentenceAm.";
+    // ── Amharic block ──────────────────────────────────────────────────────
+    final amBlock = [
+      'አሸናፊ ተመርጧል',
+      'አሸናፊው $name ነው',
+      'መታወቂያ ቁጥር $id',
+    ].join(' , ');
 
-    // 1. Linux Desktop: Native Google TTS via Python & PipeWire audio player
-    if (!kIsWeb && Platform.isLinux) {
-      try {
-        await _playLinuxAmharicAudio(tripleAnnouncementAm);
-        return;
-      } catch (e) {
-        debugPrint('[SoundService Linux Audio Error] $e');
-        try {
-          await Process.run('spd-say', ['-r', '-25', tripleAnnouncementAm]);
-          return;
-        } catch (_) {}
-      }
-    }
+    // ── English block ──────────────────────────────────────────────────────
+    final enBlock = [
+      'Congratulations . The winner has been selected',
+      'The winner is $name',
+      'Unique ID $id',
+    ].join(' , ');
 
-    // 2. FlutterTTS for Android / iOS / Web
-    try {
-      await init();
-      if (_ttsSupported) {
-        await _tts.stop();
-        await _tts.setSpeechRate(0.30); // Slow rate for clear winner details
-        await _tts.speak(tripleAnnouncementAm);
-      }
-    } catch (e) {
-      debugPrint('[SoundService Winner Speech Warning] $e');
-    }
-  }
+    // One full round: Amharic → long gap → English → very long gap
+    final oneRound = '$amBlock . . . . $enBlock . . . . . .';
 
-  /// Execute Amharic Audio Speech Synthesis on Linux using Python & PipeWire / ALSA player
-  static Future<void> _playLinuxAmharicAudio(String text) async {
-    final pyScript = '''
-import urllib.request, urllib.parse, os, subprocess, sys
-text = """$text"""
-try:
-    url = 'https://translate.google.com/translate_tts?ie=UTF-8&q=' + urllib.parse.quote(text) + '&tl=am&client=tw-ob'
-    req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-    tmp_file = '/tmp/equb_voice_play.mp3'
-    with urllib.request.urlopen(req) as resp, open(tmp_file, 'wb') as f:
-        f.write(resp.read())
-    subprocess.run(['pw-play', tmp_file], check=False)
-except Exception as e:
-    subprocess.run(['spd-say', text], check=False)
-''';
+    // Stop any previous audio first, then start looping
     await stop();
-    await Process.run('python3', ['-c', pyScript]);
+    _looping = true;
+
+    // 3 rounds immediately (≈ 60 s coverage), then loop via timer / completion handler
+    final threeRounds = '$oneRound $oneRound $oneRound';
+
+    if (!kIsWeb && Platform.isLinux) {
+      _speakLinux(threeRounds, slow: true);
+      _loopTimer = Timer.periodic(const Duration(seconds: 55), (_) {
+        if (_looping) _speakLinux(threeRounds, slow: true);
+      });
+    } else {
+      if (!_inited) await init();
+      if (_ready) {
+        await _tts.stop();
+        await _tts.setVolume(1.0);
+        await _tts.setPitch(1.15);
+        await _tts.setSpeechRate(0.34);
+
+        // When each 3-round chunk finishes, start the next one if still looping
+        _tts.setCompletionHandler(() {
+          if (_looping && _ready) {
+            _tts.speak(threeRounds);
+          }
+        });
+
+        await _tts.speak(threeRounds);
+      }
+    }
   }
 
-  /// Immediately stop any ongoing audio speech output
+  // ── Stop all audio and cancel the loop ────────────────────────────────────
   static Future<void> stop() async {
+    _looping = false;
+    _loopTimer?.cancel();
+    _loopTimer = null;
+
     if (!kIsWeb && Platform.isLinux) {
-      try {
-        await Process.run('pkill', ['-f', 'pw-play']);
-        await Process.run('pkill', ['-f', 'equb_voice_play']);
-        await Process.run('spd-say', ['-S']);
-      } catch (_) {}
+      try { await Process.run('pkill', ['-f', 'pw-play']);    } catch (_) {}
+      try { await Process.run('pkill', ['-f', 'equb_voice']); } catch (_) {}
+      try { await Process.run('spd-say', ['-S']);             } catch (_) {}
     }
+
     try {
-      if (_ttsSupported) {
+      if (_ready) {
+        _tts.setCompletionHandler(() {}); // clear chaining handler
         await _tts.stop();
       }
     } catch (_) {}
+  }
+
+  // ── Amharic level name helper ─────────────────────────────────────────────
+  static String _amLevel(String levelName) {
+    final l = levelName.toLowerCase();
+    if (l.contains('high')   || l.contains('ከፍ')) return 'ከፍተኛ ደረጃ';
+    if (l.contains('medium') || l.contains('መካ')) return 'መካከለኛ ደረጃ';
+    if (l.contains('low')    || l.contains('ዝቅ')) return 'ዝቅተኛ ደረጃ';
+    return 'እቁብ';
+  }
+
+  // ── Internal speak helper ─────────────────────────────────────────────────
+  static Future<void> _speak(String text, {double rate = 0.40}) async {
+    if (!kIsWeb && Platform.isLinux) {
+      _speakLinux(text);
+      return;
+    }
+    try {
+      if (!_inited) await init();
+      if (!_ready) return;
+      await _tts.stop();
+      await _tts.setVolume(1.0);
+      await _tts.setSpeechRate(rate);
+      await _tts.speak(text);
+    } catch (e) {
+      debugPrint('[SoundService] _speak: $e');
+    }
+  }
+
+  // ── Linux TTS: Google TTS → pw-play → spd-say fallback ───────────────────
+  static void _speakLinux(String text, {bool slow = false}) {
+    final safe = text
+        .replaceAll('\\', '\\\\')
+        .replaceAll('"',  '\\"')
+        .replaceAll("'",  "\\'")
+        .replaceAll('\n', ' ');
+    final speed = slow ? '0.55' : '0.75';
+
+    final pyScript = '''
+import urllib.request, urllib.parse, subprocess
+
+text = """$safe"""
+speed = "$speed"
+tmp = '/tmp/equb_voice_announce.mp3'
+try:
+    url = ('https://translate.google.com/translate_tts'
+           '?ie=UTF-8'
+           '&q=' + urllib.parse.quote(text[:200]) +
+           '&tl=am&client=tw-ob&ttsspeed=' + speed)
+    req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+    with urllib.request.urlopen(req, timeout=10) as r, open(tmp, 'wb') as f:
+        f.write(r.read())
+    subprocess.run(['pw-play', tmp], timeout=90)
+except Exception:
+    try:
+        rate = '-25' if speed == '0.55' else '-10'
+        subprocess.run(['spd-say', '-r', rate, '-w', text[:500]], timeout=90)
+    except Exception:
+        pass
+''';
+
+    try {
+      Process.run('python3', ['-c', pyScript]);
+    } catch (e) {
+      debugPrint('[SoundService] Linux TTS: $e');
+    }
   }
 }

@@ -4,6 +4,7 @@ import '../../config/theme.dart';
 import '../../services/role_management_service.dart';
 import '../../utils/constants.dart';
 import '../../widgets/smart_back_button.dart';
+import '../../widgets/offline_banner.dart';
 
 class LevelAdminPaymentVerificationScreen extends StatefulWidget {
   final String level;
@@ -216,6 +217,7 @@ class _LevelAdminPaymentVerificationScreenState
       ),
       body: Column(
         children: [
+          const OfflineBanner(),
           // Filter status bar
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),

@@ -6,6 +6,7 @@ import '../../config/theme.dart';
 import '../../providers/auth_provider.dart';
 import '../../services/api_service.dart';
 import '../../utils/constants.dart';
+import '../../widgets/page_header_banner.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 class ProfileScreen extends StatefulWidget {
@@ -65,6 +66,24 @@ class _ProfileScreenState extends State<ProfileScreen> {
               },
             ),
         ],
+        bottom: PreferredSize(
+          preferredSize: const Size.fromHeight(64),
+          child: PageHeaderBanner(
+            color: auth.isAdmin
+                ? AppColors.primaryDark
+                : AppColors.primary,
+            icon: auth.isAdmin
+                ? Icons.admin_panel_settings_rounded
+                : Icons.person_rounded,
+            phrases: PageHeaderBanner.equbPhrases,
+            staticTitle: auth.isSuperAdmin
+                ? (isAmharic ? 'ሱፐር አስተዳዳሪ' : 'Super Admin Profile')
+                : auth.isAdmin
+                    ? (isAmharic ? 'አስተዳዳሪ' : 'Admin Profile')
+                    : (isAmharic ? 'የእኔ መገለጫ' : 'Member Profile'),
+            height: 64,
+          ),
+        ),
       ),
 
       // ── BODY: GUEST STATE VS LOGGED IN STATE ────────────────────────────────
@@ -247,27 +266,70 @@ class _ProfileScreenState extends State<ProfileScreen> {
   // ── LOGGED IN VIEW ─────────────────────────────────────────────────────────
   Widget _buildLoggedInProfileView(
       BuildContext context, AuthProvider auth, Map<String, dynamic> user, bool isAmharic) {
+    final name = (user['fullName'] ?? '${user['firstName'] ?? ''} ${user['lastName'] ?? ''}'.trim()).toString();
+    final initials = name.isNotEmpty ? name[0].toUpperCase() : 'U';
+
     return Column(
       children: [
-        // Avatar
-        CircleAvatar(
-          radius: 44,
-          backgroundColor: AppColors.primary,
-          child: Text(
-            (user['fullName'] ?? user['firstName'] ?? 'U')[0].toUpperCase(),
-            style: const TextStyle(
-                color: Colors.white, fontSize: 36, fontWeight: FontWeight.bold),
+        // ── Profile hero card — app icon + avatar + name ──────────────
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.fromLTRB(16, 20, 16, 20),
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              colors: [AppColors.primaryDark, AppColors.primary],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+            borderRadius: const BorderRadius.vertical(bottom: Radius.circular(28)),
+            boxShadow: [BoxShadow(
+                color: AppColors.primary.withOpacity(0.3),
+                blurRadius: 16,
+                offset: const Offset(0, 6))],
+          ),
+          child: Column(
+            children: [
+              // App icon — round, white border
+              Container(
+                width: 72,
+                height: 72,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  border: Border.all(color: Colors.white, width: 3),
+                  boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 10)],
+                ),
+                child: ClipOval(
+                  child: Image.asset(
+                    'assets/images/app_icon.png',
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, __, ___) => Container(
+                      color: Colors.white24,
+                      child: Center(child: Text(initials,
+                          style: const TextStyle(color: Colors.white,
+                              fontSize: 28, fontWeight: FontWeight.bold))),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 10),
+              // Name
+              Text(
+                name.isNotEmpty ? name : (isAmharic ? 'ተጠቃሚ' : 'User'),
+                style: const TextStyle(
+                    color: Colors.white, fontSize: 20, fontWeight: FontWeight.w900),
+              ),
+              const SizedBox(height: 4),
+              // Email
+              Text(
+                user['email']?.toString() ?? '',
+                style: const TextStyle(color: Colors.white70, fontSize: 13),
+              ),
+              const SizedBox(height: 8),
+              // Verification badge
+              _verificationBadge(user['verificationStatus'] as String? ?? 'pending'),
+            ],
           ),
         ),
-        const SizedBox(height: 12),
-        Text(
-          user['fullName'] ?? '${user['firstName'] ?? ''} ${user['lastName'] ?? ''}'.trim(),
-          style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-        ),
-        Text(user['email'] ?? '',
-            style: const TextStyle(color: AppColors.textSecondary)),
-        const SizedBox(height: 8),
-        _verificationBadge(user['verificationStatus'] ?? 'pending'),
         const SizedBox(height: 16),
 
         // Admin Dashboard Link if Admin or Super Admin

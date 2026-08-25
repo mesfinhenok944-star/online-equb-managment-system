@@ -6,6 +6,7 @@ import '../../providers/auth_provider.dart';
 import '../../services/api_service.dart';
 import '../../services/firestore_service.dart';
 import '../../widgets/equb_level_card.dart';
+import '../../widgets/page_header_banner.dart';
 import '../../widgets/smart_back_button.dart';
 
 class EqubListScreen extends StatefulWidget {
@@ -68,6 +69,14 @@ class _EqubListScreenState extends State<EqubListScreen> {
         leading: const SmartBackButton(),
       ),
       body: Column(children: [
+        // ── Animated page header banner ──────────────────────────────────
+        PageHeaderBanner(
+          color: AppColors.primary,
+          icon: Icons.savings_rounded,
+          phrases: PageHeaderBanner.equbPhrases,
+          staticTitle: 'Ethiopian Digital Equb',
+          height: 100,
+        ),
         // Filter chips
         Padding(
           padding: const EdgeInsets.all(16),
