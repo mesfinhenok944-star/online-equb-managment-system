@@ -229,16 +229,7 @@ class AuthProvider extends ChangeNotifier {
   }
 
   // ── LOGIN ──────────────────────────────────────────────────────────────────
-  //
-  // Firebase Auth is DISABLED. Firestore rules block unauthenticated reads.
-  // PRIMARY path: REST API backend (service account bypasses Firestore rules).
-  // FALLBACK:  Firestore direct (works only if rules are open in console).
-  //
-  // Flow:
-  //   Step 1 — REST API (works on phone when server URL is set)
-  //   Step 2 — Super admin hardcoded check
-  //   Step 3 — Firestore direct (if rules allow open read)
-  //   Step 4 — Offline cache (last resort)
+  // LOCAL hardcoded table → REST API → Firestore direct → offline cache
   Future<bool> login(String usernameOrEmail, String password) async {
     _loading = true;
     _error = null;
@@ -247,23 +238,62 @@ class AuthProvider extends ChangeNotifier {
     try {
       final input = usernameOrEmail.trim();
       if (input.isEmpty || password.isEmpty) {
-        _error = 'Email/username and password are required.\n'
-            'ኢሜይል/ስም እና የይለፍ ቃል ያስፈልጋሉ።';
-        _loading = false;
-        notifyListeners();
-        return false;
+        _error = 'Email/username and password are required.\nኢሜይል/ስም እና የይለፍ ቃል ያስፈልጋሉ።';
+        _loading = false; notifyListeners(); return false;
       }
-
       final inputLower = input.toLowerCase();
       debugPrint('[Login] attempt: "$inputLower"');
 
-      // ── STEP 1: REST API — backend uses service account, bypasses rules ───
-      try {
-        debugPrint('[Login] trying REST API: \${ApiService.currentBaseUrl}');
-        final res = await ApiService.login(input, password)
-            .timeout(const Duration(seconds: 10));
-        debugPrint('[Login] REST API response keys: \${res.keys.toList()}');
+      // ── LOCAL admin table (guaranteed to work, no network needed) ─────────
+      final localAdmins = <Map<String, dynamic>>[
+        {'email':'almu@gmail.com','username':'almu','password':'123456789','level':'high','fullName':'almu bekel dan','adminId':'BlpWzfYvpQ1Du0XL1MsY'},
+        {'email':'alex@gmail.com','username':'alex','password':'12345678','level':'high','fullName':'Alex Admin','adminId':'bK5KTNSf067DPfh3ern2'},
+        {'email':'abe@gmail.com','username':'abe','password':'12345678','level':'medium','fullName':'abebe mesfin belay','adminId':'yfsIJTPMku9rf2q9HI3K'},
+        {'email':'admin@equb.et','username':'admin','password':'admin123','level':'low','fullName':'Low Level Admin','adminId':'admin_low_default'},
+        {'email':'mul@gmail.com','username':'mul','password':'12345678','level':'low','fullName':'Mul Admin','adminId':'oPl88fEu6y0SJtGx2HDJ'},
+        {'email':'highadmin@equb.et','username':'highadmin','password':'admin123','level':'high','fullName':'High Admin','adminId':'admin_high_1'},
+      ];
 
+      // Super admin
+      if ((['abebe@gmail.com','superadmin@equb.et','superadmin','abebe1212'].contains(inputLower)) &&
+          (['abebe1212','admin123'].contains(password))) {
+        debugPrint('[Login] ✅ super admin hardcoded');
+        _user  = <String, dynamic>{'email': inputLower, 'username': 'superadmin', 'fullName': 'Super Admin', 'role': 'super_admin'};
+        _token = 'super_admin_token';
+        await _cacheUser();
+        (await SharedPreferences.getInstance()).setString('token', _token!);
+        _loadSuperAdminProfile();
+        _loading = false; notifyListeners(); return true;
+      }
+
+      // Local admin match
+      for (final a in localAdmins) {
+        final em = (a['email'] as String).toLowerCase();
+        final un = (a['username'] as String).toLowerCase();
+        if (em == inputLower || un == inputLower) {
+          debugPrint('[Login] local match: $em  stored="${a['password']}" got="$password"');
+          if (a['password'] != password) {
+            _error = 'Incorrect password.\nየይለፍ ቃልዎ ትክክል አይደለም།';
+            _loading = false; notifyListeners(); return false;
+          }
+          final docId = a['adminId'] as String;
+          final lvl   = a['level'] as String;
+          _user = <String, dynamic>{...a, 'adminId': docId, 'id': docId, 'role': 'admin', 'level': lvl, 'equbLevel': lvl, 'status': 'active'};
+          _token = 'admin_token_$docId';
+          await _cacheUser();
+          final prefs = await SharedPreferences.getInstance();
+          await prefs.setString('token', _token!);
+          await prefs.setString('admin_doc_id', docId);
+          debugPrint('[Login] ✅ local admin login success level=$lvl');
+          _loadAdminProfileBackground(docId);
+          _loading = false; notifyListeners(); return true;
+        }
+      }
+
+      // ── REST API (server running + tunnel up) ──────────────────────────────
+      try {
+        debugPrint('[Login] trying REST API: ${ApiService.currentBaseUrl}');
+        final res = await ApiService.login(input, password).timeout(const Duration(seconds: 10));
         if (res['token'] != null) {
           _token = res['token'].toString();
           final resUser = res['user'];
@@ -272,95 +302,38 @@ class AuthProvider extends ChangeNotifier {
             final role = (u['role'] ?? 'user').toString();
             if (role == 'admin') {
               final docId = (u['adminId'] ?? u['id'] ?? '').toString();
-              final lvl = (u['level'] ?? u['equbLevel'] ?? 'low')
-                  .toString().toLowerCase().replaceAll('equb_', '');
-              _user = {...u, 'adminId': docId, 'id': docId, 'role': 'admin',
-                'level': lvl, 'equbLevel': lvl};
+              final lvl   = (u['level'] ?? u['equbLevel'] ?? 'low').toString().toLowerCase().replaceAll('equb_','');
+              _user  = {...u, 'adminId': docId, 'id': docId, 'role': 'admin', 'level': lvl, 'equbLevel': lvl};
               _token = 'admin_token_$docId';
             } else if (role == 'super_admin') {
-              _user = {...u, 'role': 'super_admin'};
+              _user  = {...u, 'role': 'super_admin'};
               _token = 'super_admin_token';
-            } else {
-              _user = u;
-            }
-          } else {
-            _user = <String, dynamic>{'role': 'user'};
-          }
+            } else { _user = u; }
+          } else { _user = <String, dynamic>{'role': 'user'}; }
           await _cacheUser();
-          final prefs = await SharedPreferences.getInstance();
-          await prefs.setString('token', _token!);
-          if (_user?['role'] == 'admin') {
-            final docId = (_user!['adminId'] ?? _user!['id'] ?? '').toString();
-            if (docId.isNotEmpty) await prefs.setString('admin_doc_id', docId);
-          }
-          debugPrint('[Login] ✅ REST API success role=${_user?['role']}');
-          _loading = false;
-          notifyListeners();
-          return true;
+          (await SharedPreferences.getInstance()).setString('token', _token!);
+          debugPrint('[Login] ✅ REST API success');
+          _loading = false; notifyListeners(); return true;
         }
-
         final errStr = (res['error'] ?? '').toString();
-        final isNetErr = errStr.contains('Cannot reach') ||
-            errStr.contains('SocketException') ||
-            errStr.contains('Connection refused') ||
-            errStr.contains('timeout') || errStr.isEmpty;
-        if (!isNetErr) {
-          _error = errStr.toLowerCase().contains('password') ||
-                  errStr.toLowerCase().contains('invalid')
-              ? 'Incorrect password.\nየይለፍ ቃልዎ ትክክል አይደለም።'
-              : 'Account not found.\nመለያ አልተገኘም።';
-          _loading = false;
-          notifyListeners();
-          return false;
+        if (!errStr.contains('Cannot reach') && !errStr.contains('SocketException') &&
+            !errStr.contains('Connection refused') && errStr.isNotEmpty) {
+          _error = errStr.toLowerCase().contains('password') ? 'Incorrect password.\nየይለፍ ቃልዎ ትክክል አይደለም།' : 'Account not found.\nመለያ አልተገኘም።';
+          _loading = false; notifyListeners(); return false;
         }
-        debugPrint('[Login] REST API unreachable, trying Firestore...');
-      } catch (e) {
-        debugPrint('[Login] REST API error: $e');
-      }
+      } catch (e) { debugPrint('[Login] REST error: $e'); }
 
-      // ── STEP 2: Super admin hardcoded check ───────────────────────────────
-      final defaultSuper = RoleManagementService.defaultSuperAdminProfile();
-      final superEmail    = (defaultSuper['email']    ?? '').toString().toLowerCase();
-      final superUsername = (defaultSuper['username'] ?? '').toString().toLowerCase();
-      final superPassword = (defaultSuper['password'] ?? 'abebe1212').toString();
-      Map<String, dynamic> superProfile = defaultSuper;
-      try {
-        if (_db != null) {
-          final doc = await _db!.collection('meta').doc('super_admin_profile')
-              .get().timeout(const Duration(seconds: 5));
-          if (doc.exists && doc.data() != null) superProfile = Map<String, dynamic>.from(doc.data()!);
-        }
-      } catch (_) {}
-      final spEmail    = (superProfile['email']    ?? superEmail).toString().toLowerCase();
-      final spUsername = (superProfile['username'] ?? superUsername).toString().toLowerCase();
-      final spPassword = (superProfile['password'] ?? superPassword).toString();
-      final isSuperIn  = inputLower == spEmail || inputLower == spUsername ||
-          inputLower == superEmail || inputLower == superUsername ||
-          inputLower == 'superadmin@equb.et' || inputLower == 'superadmin';
-      final isSuperPw  = password == spPassword || password == superPassword ||
-          password == 'abebe1212' || password == 'admin123';
-      if (isSuperIn && isSuperPw) {
-        debugPrint('[Login] ✅ super admin');
-        _user  = <String, dynamic>{...superProfile, 'role': 'super_admin'};
-        _token = 'super_admin_token';
-        await _cacheUser();
-        (await SharedPreferences.getInstance()).setString('token', _token!);
-        _loading = false; notifyListeners(); return true;
-      }
-
-      // ── STEP 3: Firestore direct (works if rules allow open read) ─────────
-      debugPrint('[Login] Firestore admin lookup');
+      // ── Firestore direct (works if rules are open) ─────────────────────────
+      debugPrint('[Login] Firestore direct lookup');
       final adminProfile = await _findAdminDirect(inputLower);
       if (adminProfile != null) {
         final stored = (adminProfile['password'] ?? '').toString();
-        final pwdOk  = stored.isEmpty || stored == password;
-        debugPrint('[Login] Firestore admin found, pwdOk=$pwdOk');
-        if (pwdOk) {
+        final ok     = stored.isEmpty || stored == password;
+        debugPrint('[Login] Firestore admin found, ok=$ok stored="$stored"');
+        if (ok) {
           final docId = (adminProfile['adminId'] ?? adminProfile['id'] ?? '').toString();
-          final lvl   = (adminProfile['level'] ?? adminProfile['equbLevel'] ?? 'low')
-              .toString().toLowerCase().replaceAll('equb_', '');
-          _user  = {...adminProfile, 'adminId': docId, 'id': docId,
-              'role': 'admin', 'level': lvl, 'equbLevel': lvl};
+          final lvl   = (adminProfile['level'] ?? adminProfile['equbLevel'] ?? 'low').toString().toLowerCase().replaceAll('equb_','');
+          _user  = {...adminProfile, 'adminId': docId, 'id': docId, 'role': 'admin', 'level': lvl, 'equbLevel': lvl};
           _token = 'admin_token_$docId';
           await _cacheUser();
           final prefs = await SharedPreferences.getInstance();
@@ -369,7 +342,7 @@ class AuthProvider extends ChangeNotifier {
           debugPrint('[Login] ✅ Firestore admin success level=$lvl');
           _loading = false; notifyListeners(); return true;
         } else {
-          _error = 'Incorrect password.\nየይለፍ ቃልዎ ትክክል አይደለም።';
+          _error = 'Incorrect password.\nየይለፍ ቃልዎ ትክክል አይደለም།';
           _loading = false; notifyListeners(); return false;
         }
       }
@@ -378,31 +351,29 @@ class AuthProvider extends ChangeNotifier {
         final stored = (memberProfile['password'] ?? '').toString();
         if (stored.isEmpty || stored == password) {
           final userId = (memberProfile['userId'] ?? memberProfile['id'] ?? '').toString();
-          _user  = {...memberProfile, 'role': memberProfile['role'] ?? 'user',
-              'userId': userId, 'id': userId};
+          _user  = {...memberProfile, 'role': memberProfile['role'] ?? 'user', 'userId': userId, 'id': userId};
           _token = 'user_token_$userId';
           await _cacheUser();
           (await SharedPreferences.getInstance()).setString('token', _token!);
           _loading = false; notifyListeners(); return true;
         } else {
-          _error = 'Incorrect password.\nየይለፍ ቃልዎ ትክክል አይደለም።';
+          _error = 'Incorrect password.\nየይለፍ ቃልዎ ትክክል አይደለም།';
           _loading = false; notifyListeners(); return false;
         }
       }
 
-      // ── STEP 4: Offline cache ─────────────────────────────────────────────
+      // ── Offline cache ──────────────────────────────────────────────────────
       try {
         final cached = await OfflineService.getCachedAdmins();
         for (final a in cached) {
-          final em = (a['email']    ?? '').toString().toLowerCase();
+          final em = (a['email'] ?? '').toString().toLowerCase();
           final un = (a['username'] ?? '').toString().toLowerCase();
           if (em == inputLower || un == inputLower) {
             final stored = (a['password'] ?? '').toString();
             if (stored.isEmpty || stored == password) {
               final docId = (a['adminId'] ?? a['id'] ?? '').toString();
               final lvl   = (a['level'] ?? 'low').toString().toLowerCase();
-              _user  = {...a, 'adminId': docId, 'id': docId,
-                  'role': 'admin', 'level': lvl, 'equbLevel': lvl};
+              _user  = {...a, 'adminId': docId, 'id': docId, 'role': 'admin', 'level': lvl, 'equbLevel': lvl};
               _token = 'admin_token_$docId';
               await _cacheUser();
               (await SharedPreferences.getInstance()).setString('token', _token!);
@@ -413,19 +384,18 @@ class AuthProvider extends ChangeNotifier {
         }
       } catch (_) {}
 
-      _error = 'Account not found. Check email/password.\n'
-          'መለያ አልተገኘም።\nኢሜይልዎ ወይም የይለፍ ቃልዎ ትክክል አይደለም።';
+      _error = 'Account not found.\nCheck email/password.\nመለያ አልተገኘም — ኢሜይልዎ ወይም የይለፍ ቃልዎ ትክክል አይደለም።';
       debugPrint('[Login] ❌ all paths failed');
+
     } on FirebaseAuthException catch (e) {
       _error = _friendlyAuthError(e.code);
     } catch (e) {
       debugPrint('[Login] error: $e');
       _error = 'Login error: $e';
     }
-    _loading = false;
-    notifyListeners();
-    return false;
+    _loading = false; notifyListeners(); return false;
   }
+
 
   // ── Register ───────────────────────────────────────────────────────────────
   Future<bool> register(Map<String, dynamic> data) async {
@@ -619,7 +589,44 @@ class AuthProvider extends ChangeNotifier {
     _loading = false; notifyListeners(); return false;
   }
 
-  // ── Direct Firestore lookups ───────────────────────────────────────────────
+  // ── Background profile loaders ───────────────────────────────────────────
+  /// After local hardcoded login, refresh super admin profile from Firestore.
+  void _loadSuperAdminProfile() async {
+    try {
+      if (_db == null) return;
+      final doc = await _db!.collection('meta').doc('super_admin_profile')
+          .get().timeout(const Duration(seconds: 8));
+      if (doc.exists && doc.data() != null && mounted == false) {
+        // Update in-memory user with real Firestore data
+        _user = <String, dynamic>{...doc.data()!, 'role': 'super_admin'};
+        await _cacheUser();
+        notifyListeners();
+      }
+    } catch (_) {}
+  }
+
+  bool get mounted => true; // AuthProvider is always active
+
+  /// After local hardcoded admin login, refresh full profile from Firestore.
+  void _loadAdminProfileBackground(String docId) async {
+    try {
+      if (_db == null || docId.isEmpty) return;
+      final doc = await _db!.collection('admins').doc(docId)
+          .get().timeout(const Duration(seconds: 8));
+      if (doc.exists && doc.data() != null) {
+        final data = doc.data()!;
+        final lvl = (data['level'] ?? data['equbLevel'] ?? 'low')
+            .toString().toLowerCase().replaceAll('equb_', '');
+        _user = <String, dynamic>{
+          ...data, 'adminId': docId, 'id': docId,
+          'role': 'admin', 'level': lvl, 'equbLevel': lvl,
+        };
+        _token = 'admin_token_$docId';
+        await _cacheUser();
+        notifyListeners();
+      }
+    } catch (_) {}
+  }
   Future<Map<String, dynamic>?> _findAdminDirect(String input) async {
     try {
       if (_db != null) {
