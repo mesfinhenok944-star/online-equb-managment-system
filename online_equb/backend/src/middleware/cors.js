@@ -2,11 +2,19 @@
 
 const cors = require('cors');
 
-// Allow all origins in development; lock down in production.
+// Allow all origins — includes localtunnel and real phone requests.
 const corsOptions = {
   origin: '*',
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],
+  allowedHeaders: [
+    'Content-Type',
+    'Authorization',
+    'Accept',
+    'bypass-tunnel-reminder',
+    'User-Agent',
+    'x-forwarded-for',
+  ],
 };
 
 module.exports = cors(corsOptions);
+

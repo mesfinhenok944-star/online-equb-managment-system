@@ -26,9 +26,9 @@ class ApiService {
     if (kIsWeb) return 'http://localhost:8080/api/v1';
     try {
       if (Platform.isAndroid) {
-        // Real device: try the stored server IP first
-        // The emulator check is deferred to runtime via _cachedBase
-        return _cachedBase ?? 'http://10.0.2.2:8080/api/v1';
+        // Real device: use cached URL (tunnel or user-set LAN IP)
+        // Falls back to tunnel URL which works over any network
+        return _cachedBase ?? 'https://equb-admin-server.loca.lt/api/v1';
       }
     } catch (_) {}
     return 'http://localhost:8080/api/v1';
@@ -45,13 +45,14 @@ class ApiService {
       final stored = prefs.getString('server_base_url');
       if (stored != null && stored.isNotEmpty) {
         _cachedBase = stored;
+        _overrideBaseUrl = stored;
         return;
       }
     } catch (_) {}
-    // Default fallback — emulator uses 10.0.2.2, real phone needs LAN IP
+    // Default: public tunnel URL works on real phone over any network
     try {
       if (!kIsWeb && Platform.isAndroid) {
-        _cachedBase = 'http://10.0.2.2:8080/api/v1';
+        _cachedBase = 'https://equb-admin-server.loca.lt/api/v1';
       }
     } catch (_) {}
   }
@@ -92,7 +93,12 @@ class ApiService {
   }
 
   static Future<Map<String, String>> _headers({bool auth = true}) async {
-    final h = <String, String>{'Content-Type': 'application/json'};
+    final h = <String, String>{
+      'Content-Type': 'application/json',
+      // Required for localtunnel to bypass the landing page
+      'bypass-tunnel-reminder': 'true',
+      'User-Agent': 'EqubApp/1.0',
+    };
     if (auth) {
       final t = await _getToken();
       if (t != null && t.isNotEmpty) h['Authorization'] = 'Bearer $t';
