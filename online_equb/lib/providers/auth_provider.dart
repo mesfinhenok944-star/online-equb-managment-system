@@ -230,12 +230,17 @@ class AuthProvider extends ChangeNotifier {
 
   // ── LOGIN ──────────────────────────────────────────────────────────────────
   //
-  // Priority on REAL ANDROID PHONE (Firebase ready):
-  //   Step 1 — Super admin: compare against hardcoded defaults + Firestore
-  //   Step 2 — Admin: Firestore admins collection (direct, fast, no server)
-  //   Step 3 — User:  Firestore users collection
-  //   Step 4 — Firebase Auth sign-in (if email/pass not found above)
-  //   Step 5 — REST API backend (only if Firestore unavailable)
+  // REAL PHONE FIX: Firestore rules require isAuthenticated().
+  // So we MUST sign into Firebase Auth FIRST, then read Firestore.
+  //
+  // Flow:
+  //   Step 1 — Super admin hardcoded check (no network)
+  //   Step 2 — Resolve email from username (Firestore, now needs auth first OR
+  //             we try Firebase Auth with email directly)
+  //   Step 3 — Firebase Auth sign-in (gets authenticated session)
+  //   Step 4 — After auth, load admin/user profile from Firestore
+  //   Step 5 — Admin password check against Firestore record
+  //   Step 6 — REST API backend (Linux desktop fallback only)
   Future<bool> login(String usernameOrEmail, String password) async {
     _loading = true;
     _error = null;
@@ -252,56 +257,40 @@ class AuthProvider extends ChangeNotifier {
       }
 
       final inputLower = input.toLowerCase();
+      debugPrint('[Login] attempt: input=$inputLower');
 
-      // ── STEP 1: Super admin ──────────────────────────────────────────────
-      // Use hardcoded defaults first to avoid any network call.
-      final defaultSuper =
-          RoleManagementService.defaultSuperAdminProfile();
+      // ── STEP 1: Super admin hardcoded check (no Firestore needed) ─────────
+      final defaultSuper = RoleManagementService.defaultSuperAdminProfile();
       final superEmail    = (defaultSuper['email']    ?? '').toString().toLowerCase();
       final superUsername = (defaultSuper['username'] ?? '').toString().toLowerCase();
       final superPassword = (defaultSuper['password'] ?? '').toString();
 
-      // Also try to get from Firestore with a short timeout
-      Map<String, dynamic> superProfile = defaultSuper;
-      try {
-        if (_db != null) {
-          final doc = await _db!
-              .collection('meta')
-              .doc('super_admin_profile')
-              .get()
-              .timeout(const Duration(seconds: 4));
-          if (doc.exists && doc.data() != null) {
-            superProfile = Map<String, dynamic>.from(doc.data()!);
-          }
-        }
-      } catch (_) {}
-
-      final superEmailFinal    = (superProfile['email']    ?? superEmail).toString().toLowerCase();
-      final superUsernameFinal = (superProfile['username'] ?? superUsername).toString().toLowerCase();
-      final superPasswordFinal = (superProfile['password'] ?? superPassword).toString();
-
-      final isSuperMatch = inputLower == superEmailFinal ||
-          inputLower == superUsernameFinal ||
+      final isSuperMatch = inputLower == superEmail ||
+          inputLower == superUsername ||
           inputLower == 'superadmin@equb.et' ||
-          inputLower == 'superadmin' ||
-          inputLower == superEmail ||
-          inputLower == superUsername;
+          inputLower == 'superadmin';
 
-      final isSuperPass = password == superPasswordFinal ||
-          password == superPassword ||
-          password == 'abebe1212' ||
-          password == 'admin123';
-
-      if (isSuperMatch && isSuperPass) {
+      if (isSuperMatch && (password == superPassword || password == 'abebe1212' || password == 'admin123')) {
+        debugPrint('[Login] ✅ super admin matched (hardcoded)');
+        // Sign into Firebase Auth for a proper session
         try {
           await _auth?.signInWithEmailAndPassword(
-              email: superEmailFinal.isNotEmpty ? superEmailFinal : 'abebe@gmail.com',
-              password: password);
+              email: superEmail.isNotEmpty ? superEmail : 'abebe@gmail.com',
+              password: password)
+              .timeout(const Duration(seconds: 8));
         } catch (_) {}
-        _user = <String, dynamic>{
-          ...superProfile,
-          'role': 'super_admin',
-        };
+        // Load super admin profile from Firestore if available
+        Map<String, dynamic> superProfile = defaultSuper;
+        try {
+          if (_db != null) {
+            final doc = await _db!.collection('meta').doc('super_admin_profile')
+                .get().timeout(const Duration(seconds: 5));
+            if (doc.exists && doc.data() != null) {
+              superProfile = Map<String, dynamic>.from(doc.data()!);
+            }
+          }
+        } catch (_) {}
+        _user  = <String, dynamic>{...superProfile, 'role': 'super_admin'};
         _token = 'super_admin_token';
         await _cacheUser();
         final prefs = await SharedPreferences.getInstance();
@@ -311,27 +300,141 @@ class AuthProvider extends ChangeNotifier {
         return true;
       }
 
-      // ── STEP 2: Admin — Firestore FIRST (works on real phone without server)
+      // ── STEP 2: Resolve email if user typed a username ────────────────────
+      // We need an email for Firebase Auth. If input looks like username
+      // (no @), we must resolve it. But Firestore requires auth first —
+      // catch-22. Solution: try Firebase Auth with raw input as email,
+      // and in parallel try to resolve from Firestore without auth
+      // (uses a lenient timeout — will fail on locked rules, that's OK).
+      String? resolvedEmail;
+      if (input.contains('@')) {
+        resolvedEmail = input;
+      } else {
+        // Try Firestore username lookup (may fail if not authed — handled below)
+        resolvedEmail = await _resolveEmail(inputLower);
+        debugPrint('[Login] resolved email from username: $resolvedEmail');
+      }
+
+      // ── STEP 3: Firebase Auth sign-in (MUST happen before Firestore reads) ─
+      // This gives us an authenticated session so Firestore rules pass.
+      String? firebaseUid;
+      String? firebaseToken;
+
+      if (_auth != null && resolvedEmail != null) {
+        try {
+          debugPrint('[Login] trying Firebase Auth with: $resolvedEmail');
+          final cred = await _auth!
+              .signInWithEmailAndPassword(email: resolvedEmail, password: password)
+              .timeout(const Duration(seconds: 12));
+          firebaseUid   = cred.user?.uid;
+          firebaseToken = await cred.user?.getIdToken();
+          debugPrint('[Login] ✅ Firebase Auth OK uid=$firebaseUid');
+        } on FirebaseAuthException catch (e) {
+          debugPrint('[Login] Firebase Auth error: ${e.code} — ${e.message}');
+          if (e.code == 'wrong-password' ||
+              e.code == 'invalid-credential') {
+            // Bad password — stop here
+            _error = _friendlyAuthError(e.code);
+            _loading = false;
+            notifyListeners();
+            return false;
+          }
+          if (e.code == 'user-not-found' || e.code == 'invalid-email') {
+            // Admin exists in Firestore but not in Firebase Auth yet.
+            // Auto-create the Firebase Auth account so future logins work.
+            debugPrint('[Login] user-not-found — attempting auto-create Firebase Auth account');
+            try {
+              final cred2 = await _auth!
+                  .createUserWithEmailAndPassword(
+                      email: resolvedEmail, password: password)
+                  .timeout(const Duration(seconds: 12));
+              firebaseUid   = cred2.user?.uid;
+              firebaseToken = await cred2.user?.getIdToken();
+              debugPrint('[Login] ✅ Firebase Auth auto-created uid=$firebaseUid');
+            } on FirebaseAuthException catch (e2) {
+              debugPrint('[Login] auto-create failed: ${e2.code}');
+              // email-already-in-use means another password was used before
+              if (e2.code == 'email-already-in-use') {
+                _error = 'Incorrect password.\nየይለፍ ቃልዎ ትክክል አይደለም።';
+                _loading = false;
+                notifyListeners();
+                return false;
+              }
+              // Other error — continue to Firestore-only path below
+            } catch (_) {}
+          }
+          // Other errors (network, etc.) — fall through to Firestore-only path
+        } catch (e) {
+          debugPrint('[Login] Firebase Auth exception: $e');
+        }
+      }
+
+      // ── STEP 4: Load profile from Firestore (now authenticated) ──────────
+      if (firebaseUid != null && _db != null) {
+        _token = firebaseToken ?? 'firebase_token_$firebaseUid';
+        await _loadUserProfile(firebaseUid);
+        // _loadUserProfile sets _user and may update _token to admin_token_xxx
+        if (_user != null) {
+          debugPrint('[Login] ✅ profile loaded role=${_user?['role']} level=${_user?['level']}');
+          // For admins: check password matches Firestore record
+          if (_user!['role'] == 'admin') {
+            final storedPwd = (_user!['password'] ?? '').toString();
+            if (storedPwd.isNotEmpty && storedPwd != password) {
+              debugPrint('[Login] ❌ admin password mismatch');
+              await _auth?.signOut();
+              _user  = null;
+              _token = null;
+              _error = 'Incorrect password.\nየይለፍ ቃልዎ ትክክል አይደለም።';
+              _loading = false;
+              notifyListeners();
+              return false;
+            }
+            final docId = (_user!['adminId'] ?? _user!['id'] ?? '').toString();
+            _token = firebaseToken ?? 'admin_token_$docId';
+            // Patch firebaseUid so next login finds admin by uid directly
+            try {
+              if (docId.isNotEmpty) {
+                await _db!.collection('admins').doc(docId).update({
+                  'firebaseUid': firebaseUid,
+                  'uid': firebaseUid,
+                });
+              }
+            } catch (_) {}
+          }
+          await _cacheUser();
+          final prefs = await SharedPreferences.getInstance();
+          await prefs.setString('token', _token ?? '');
+          if (_user!['role'] == 'admin') {
+            final docId = (_user!['adminId'] ?? _user!['id'] ?? '').toString();
+            await prefs.setString('admin_doc_id', docId);
+          }
+          _loading = false;
+          notifyListeners();
+          return true;
+        }
+        debugPrint('[Login] ⚠️ Firebase Auth OK but profile not found for uid=$firebaseUid');
+      }
+
+      // ── STEP 5: Firestore-only path (username lookup + password check) ────
+      // Reached when Firebase Auth failed but Firestore might work
+      // (e.g. admin has no Firebase Auth account yet).
+      debugPrint('[Login] trying Firestore-only admin lookup');
       final adminProfile = await _findAdminDirect(inputLower);
       if (adminProfile != null) {
         final stored = (adminProfile['password'] ?? '').toString();
         final ok = stored.isEmpty || stored == password;
-
+        debugPrint('[Login] Firestore admin found, pwd match=$ok');
         if (ok) {
-          final docId =
-              (adminProfile['adminId'] ?? adminProfile['id'] ?? '').toString();
+          final docId = (adminProfile['adminId'] ?? adminProfile['id'] ?? '').toString();
           if (docId.isEmpty) {
-            _error = 'Admin account not fully configured. Contact super admin.\n'
+            _error = 'Admin account not configured. Contact super admin.\n'
                 'የአስተዳዳሪ መለያ ሙሉ አይደለም። ሱፐር አስተዳዳሪን ያናግሩ።';
             _loading = false;
             notifyListeners();
             return false;
           }
-
           final lvl = (adminProfile['level'] ?? adminProfile['equbLevel'] ?? 'low')
-              .toString()
-              .toLowerCase();
-
+              .toString().toLowerCase();
           _user = <String, dynamic>{
             ...adminProfile,
             'adminId': docId,
@@ -340,28 +443,7 @@ class AuthProvider extends ChangeNotifier {
             'level': lvl,
             'equbLevel': lvl,
           };
-
-          // Try Firebase Auth so the admin gets a real JWT
-          String? firebaseToken;
-          try {
-            final adminEmail = (adminProfile['email'] ?? '').toString();
-            if (adminEmail.isNotEmpty && _auth != null) {
-              final cred = await _auth!
-                  .signInWithEmailAndPassword(
-                      email: adminEmail, password: password)
-                  .timeout(const Duration(seconds: 8));
-              firebaseToken = await cred.user?.getIdToken();
-              // Patch firebaseUid into admin doc
-              try {
-                await _db!.collection('admins').doc(docId).update({
-                  'firebaseUid': cred.user!.uid,
-                  'uid': cred.user!.uid,
-                });
-              } catch (_) {}
-            }
-          } catch (_) {}
-
-          _token = firebaseToken ?? 'admin_token_$docId';
+          _token = 'admin_token_$docId';
           await _cacheUser();
           final prefs = await SharedPreferences.getInstance();
           await prefs.setString('token', _token!);
@@ -372,14 +454,12 @@ class AuthProvider extends ChangeNotifier {
         }
       }
 
-      // ── STEP 3: Regular user — Firestore FIRST ───────────────────────────
+      // Regular user Firestore-only path
       final memberProfile = await _findUserDirect(inputLower);
       if (memberProfile != null) {
         final stored = (memberProfile['password'] ?? '').toString();
-        final ok = stored.isEmpty || stored == password;
-        if (ok) {
-          final userId =
-              (memberProfile['userId'] ?? memberProfile['id'] ?? '').toString();
+        if (stored.isEmpty || stored == password) {
+          final userId = (memberProfile['userId'] ?? memberProfile['id'] ?? '').toString();
           _user = <String, dynamic>{
             ...memberProfile,
             'role': memberProfile['role'] ?? 'user',
@@ -396,46 +476,9 @@ class AuthProvider extends ChangeNotifier {
         }
       }
 
-      // ── STEP 4: Firebase Auth sign-in (handles accounts created via Auth)
-      if (_auth != null) {
-        final email = input.contains('@')
-            ? input
-            : await _resolveEmail(input);
-        if (email != null) {
-          try {
-            final cred = await _auth!
-                .signInWithEmailAndPassword(email: email, password: password)
-                .timeout(const Duration(seconds: 10));
-            final u = cred.user;
-            if (u != null) {
-              _token = await u.getIdToken();
-              await _loadUserProfile(u.uid);
-              final prefs = await SharedPreferences.getInstance();
-              if (_token != null && _token!.startsWith('admin_token_')) {
-                await prefs.setString('token', _token!);
-              } else {
-                await prefs.setString('firebase_token', _token ?? '');
-              }
-              _loading = false;
-              notifyListeners();
-              return true;
-            }
-          } on FirebaseAuthException catch (e) {
-            if (e.code == 'wrong-password' ||
-                e.code == 'invalid-credential' ||
-                e.code == 'user-not-found') {
-              _error = _friendlyAuthError(e.code);
-              _loading = false;
-              notifyListeners();
-              return false;
-            }
-            _error = _friendlyAuthError(e.code);
-          } catch (_) {}
-        }
-      }
-
-      // ── STEP 5: REST API backend (last resort — Linux desktop / server avail)
+      // ── STEP 6: REST API (Linux desktop / when backend server is running) ─
       try {
+        debugPrint('[Login] trying REST API');
         final res = await ApiService.login(input, password)
             .timeout(const Duration(seconds: 8));
         if (res['token'] != null) {
@@ -462,12 +505,14 @@ class AuthProvider extends ChangeNotifier {
 
       // All paths exhausted
       _error ??= 'ኢሜይልዎ ወይም የይለፍ ቃልዎ ትክክል አይደለም።\n'
-          'Invalid credentials — please check your email and password.';
+          'Invalid credentials — please check your email/username and password.';
+      debugPrint('[Login] ❌ all paths failed, error: $_error');
     } on FirebaseAuthException catch (e) {
       _error = _friendlyAuthError(e.code);
+      debugPrint('[Login] FirebaseAuthException: ${e.code}');
     } catch (e) {
-      debugPrint('[AuthProvider.login] error: $e');
-      _error = 'Login failed. Please try again.\nዳግም ሞክር።';
+      debugPrint('[Login] unexpected error: $e');
+      _error = 'Login failed: $e\nዳግም ሞክር።';
     }
 
     _loading = false;

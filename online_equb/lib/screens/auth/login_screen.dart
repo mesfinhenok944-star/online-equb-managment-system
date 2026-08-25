@@ -33,7 +33,8 @@ class _LoginScreenState extends State<LoginScreen> {
     if (!_form.currentState!.validate()) return;
     final auth = context.read<AuthProvider>();
     final ok = await auth.login(_email.text.trim(), _password.text);
-    if (ok && mounted) {
+    if (!mounted) return;
+    if (ok) {
       if (auth.isSuperAdmin) {
         context.go('/super-admin');
       } else if (auth.isAdmin) {
@@ -41,6 +42,21 @@ class _LoginScreenState extends State<LoginScreen> {
       } else {
         context.go('/home');
       }
+    } else {
+      // Show the full error so we can debug on phone
+      final msg = auth.error ?? 'Login failed. Please check your credentials.\nዳግም ሞክር።';
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(msg, style: const TextStyle(fontSize: 13)),
+          backgroundColor: Colors.red.shade700,
+          duration: const Duration(seconds: 6),
+          action: SnackBarAction(
+            label: 'OK',
+            textColor: Colors.white,
+            onPressed: () {},
+          ),
+        ),
+      );
     }
   }
 
