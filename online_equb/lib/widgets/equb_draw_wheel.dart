@@ -306,7 +306,7 @@ class _EqubDrawWheelState extends State<EqubDrawWheel>
         Flexible(child: Text(
           widget.levelName.isNotEmpty
               ? 'የኢትዮጵያ እቁብ — ${widget.levelName} ደረጃ ዕጣ'
-              : 'የኢትዮጵያ ዲጂታል እቁብ — Ethiopian Equb Draw',
+              : 'የኢትዮጵያ ዲጂታል እቁብ ዕጣ',
           style: const TextStyle(
             color: Color(0xFFFFD700),
             fontWeight: FontWeight.w900,
@@ -394,8 +394,8 @@ class _EqubDrawWheelState extends State<EqubDrawWheel>
         const SizedBox(width: 14),
         Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           const Text(
-            '🎉 አሸናፊ ተመርጧል!  Winner Selected!',
-            style: TextStyle(color: Color(0xFFFFD700), fontWeight: FontWeight.bold, fontSize: 12),
+            '🎉 አሸናፊ ተመርጧል!',
+            style: TextStyle(color: Color(0xFFFFD700), fontWeight: FontWeight.bold, fontSize: 13),
           ),
           const SizedBox(height: 4),
           // "አሸናፊው [FullName]"
@@ -405,9 +405,9 @@ class _EqubDrawWheelState extends State<EqubDrawWheel>
             overflow: TextOverflow.ellipsis,
           ),
           const SizedBox(height: 2),
-          // "[ID]"
+          // "መታወቂያ ቁጥር [ID]"
           Text(
-            'ID: $id',
+            'መታወቂያ ቁጥር $id',
             style: const TextStyle(color: Color(0xFFBBDDCC), fontSize: 14, fontWeight: FontWeight.bold),
           ),
         ])),
@@ -488,10 +488,10 @@ class _EqubDrawWheelState extends State<EqubDrawWheel>
             : const Icon(Icons.play_circle_fill_rounded, color: Colors.white, size: 26),
         label: Text(
           _spinning
-              ? 'አሸናፊዉን ለመምረጥ እቁቡ እየዞረ ነው አሁን በመዞር ላይ ነው…'
+              ? 'አሸናፊዉን ለመምረጥ እቁቡ እየዞረ ነው . አሁን በመዞር ላይ ነው…'
               : eligible.isEmpty
-                  ? 'ምንም ብቁ ተሳታፊ የለም — No eligible participants'
-                  : 'እጣ አውጣ — Spin  (${eligible.length} ብቁ ተሳታፊዎች)',
+                  ? 'ምንም ብቁ ተሳታፊ የለም'
+                  : 'እጣ አውጣ  (${eligible.length} ብቁ ተሳታፊዎች)',
           style: const TextStyle(
               fontSize: 14, fontWeight: FontWeight.bold, color: Colors.white),
         ),
@@ -519,7 +519,7 @@ class _EqubDrawWheelState extends State<EqubDrawWheel>
           const Icon(Icons.people_alt_rounded, size: 18, color: Color(0xFF009A44)),
           const SizedBox(width: 6),
           Flexible(child: Text(
-            'ተሳታፊዎች ዝርዝር — Participants  (${eligible.length})',
+            'ተሳታፊዎች ዝርዝር  (${eligible.length})',
             style: const TextStyle(
                 fontWeight: FontWeight.bold, fontSize: 13, color: Color(0xFF009A44)),
           )),

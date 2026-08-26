@@ -1104,70 +1104,85 @@ class RoleManagementService {
   }) async {
     final nowIso = _nowIso();
     final drawData = <String, dynamic>{
-      'equbLevel': equbLevel,
-      'level': equbLevel,
-      'adminId': adminId,
-      'winnerId': winnerId,
-      'winnerName': winnerName,
-      'winnerUniqueId': winnerUniqueId,
-      'drawNumber': drawNumber,
-      'participants': participantIds,
+      'equbLevel':         equbLevel,
+      'level':             equbLevel,
+      'adminId':           adminId,
+      'winnerId':          winnerId,
+      'winnerName':        winnerName,
+      'winnerUniqueId':    winnerUniqueId,
+      'drawNumber':        drawNumber,
       'totalParticipants': participantIds.length,
-      'createdAt': nowIso,
-      'status': 'completed',
+      'createdAt':         nowIso,
+      'status':            'completed',
     };
     String? firestoreDocId;
 
-    // 1. Firestore SDK (direct write — primary on Android/iOS)
+    // ── 1. FirestoreDirectService — service account JWT, bypasses rules ─────
+    // PRIMARY: This is the only path that reliably works on real Android phone.
     try {
-      final db = _maybeDb;
-      if (db != null) {
-        final ref = await db.collection('draws').add({
-          ...drawData,
-          'createdAtTimestamp': FieldValue.serverTimestamp(),
-        });
-        firestoreDocId = ref.id;
-        if (winnerId.isNotEmpty) {
-          await db.collection('users').doc(winnerId).set({
-            'hasWon': true,
-            'status': 'selected',
+      // Save draw record to draws collection
+      firestoreDocId = await FirestoreDirectService.addDocument('draws', {
+        ...drawData,
+        'participants': participantIds.join(','),
+      });
+      debugPrint('[saveDrawResult] FirestoreDirect draw: $firestoreDocId');
+
+      // Mark winner hasWon=true, status=selected in users collection
+      if (winnerId.isNotEmpty) {
+        final ok = await FirestoreDirectService.updateDocument(
+          'users', winnerId,
+          {
+            'hasWon':      true,
+            'status':      'selected',
             'lastWinDate': nowIso,
-            'updatedAt': nowIso,
-            'participationHistory': FieldValue.arrayUnion([
-              {'drawNumber': drawNumber, 'date': nowIso, 'level': equbLevel}
-            ]),
-          }, SetOptions(merge: true));
-        }
+            'updatedAt':   nowIso,
+          },
+        );
+        debugPrint('[saveDrawResult] FirestoreDirect winner marked hasWon=true: $ok');
       }
     } catch (e) {
-      debugPrint('[saveDrawResult SDK] $e');
+      debugPrint('[saveDrawResult] FirestoreDirect error: $e');
     }
 
-    // 2. REST API background sync (fire-and-forget)
+    // ── 2. Firestore SDK fallback (when rules are open / emulator) ───────────
+    if (firestoreDocId == null) {
+      try {
+        final db = _maybeDb;
+        if (db != null) {
+          final ref = await db.collection('draws').add({
+            ...drawData,
+            'participants': participantIds,
+            'createdAtTimestamp': FieldValue.serverTimestamp(),
+          });
+          firestoreDocId = ref.id;
+          if (winnerId.isNotEmpty) {
+            await db.collection('users').doc(winnerId).set({
+              'hasWon': true,
+              'status': 'selected',
+              'lastWinDate': nowIso,
+              'updatedAt': nowIso,
+            }, SetOptions(merge: true));
+          }
+          debugPrint('[saveDrawResult] Firestore SDK draw: $firestoreDocId');
+        }
+      } catch (e) { debugPrint('[saveDrawResult SDK] $e'); }
+    }
+
+    // ── 3. REST API — fire-and-forget background sync ────────────────────────
     Future.microtask(() async {
       try {
-        await ApiService.adminRunDraw(equbLevel);
+        if (winnerId.isNotEmpty) {
+          await ApiService.adminUpdateUser(winnerId, {
+            'hasWon': true, 'status': 'selected',
+            'lastWinDate': nowIso, 'updatedAt': nowIso,
+          });
+        }
       } catch (_) {}
     });
 
-    // 3. Update user via REST API too so backend store is consistent
-    if (winnerId.isNotEmpty) {
-      Future.microtask(() async {
-        try {
-          await ApiService.adminUpdateUser(winnerId, {
-            'hasWon': true,
-            'status': 'selected',
-            'lastWinDate': nowIso,
-            'updatedAt': nowIso,
-          });
-        } catch (_) {}
-      });
-    }
-
     return <String, dynamic>{
       ...drawData,
-      'drawId':
-          firestoreDocId ?? 'local_${DateTime.now().millisecondsSinceEpoch}',
+      'drawId': firestoreDocId ?? 'local_${DateTime.now().millisecondsSinceEpoch}',
     };
   }
 

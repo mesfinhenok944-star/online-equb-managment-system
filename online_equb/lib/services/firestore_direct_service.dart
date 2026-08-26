@@ -225,28 +225,104 @@ class FirestoreDirectService {
     return list;
   }
 
-  // ── Public token accessor (for external callers like PaymentScreen) ────────
+  // ── Public token accessor ────────────────────────────────────────────────
   static Future<String?> getAdminToken() => _getToken();
 
-  // ── Fetch a single document by full REST URL ──────────────────────────────
+  // ── Fetch a single document ───────────────────────────────────────────────
   static Future<Map<String, dynamic>?> getDocument(String url, String token) async {
     try {
-      final resp = await http.get(
-        Uri.parse(url),
-        headers: {'Authorization': 'Bearer $token'},
-      ).timeout(const Duration(seconds: 10));
-      if (resp.statusCode == 200) {
-        return jsonDecode(resp.body) as Map<String, dynamic>;
-      }
-    } catch (e) {
-      debugPrint('[FirestoreDirect] getDocument error: $e');
-    }
+      final resp = await http.get(Uri.parse(url),
+          headers: {'Authorization': 'Bearer $token'})
+          .timeout(const Duration(seconds: 10));
+      if (resp.statusCode == 200) return jsonDecode(resp.body) as Map<String, dynamic>;
+    } catch (e) { debugPrint('[FirestoreDirect] getDocument: $e'); }
     return null;
   }
 
-  // ── Parse Firestore fields map into plain Dart map ────────────────────────
+  // ── Parse Firestore fields ────────────────────────────────────────────────
   static Map<String, dynamic> parseDocFields(Map<String, dynamic> fields) =>
       _fields(fields);
+
+  // ── Update (PATCH) a document — bypasses security rules ──────────────────
+  // fieldValues: plain Dart map (String/bool/int/double/null).
+  // Only the specified fields are updated (fieldMask).
+  static Future<bool> updateDocument(
+      String collection, String docId, Map<String, dynamic> fieldValues) async {
+    try {
+      final token = await _getToken();
+      if (token == null) return false;
+
+      final url = 'https://firestore.googleapis.com/v1/projects/$_P'
+          '/databases/(default)/documents/$collection/$docId';
+
+      // Build updateMask query params
+      final maskParams = fieldValues.keys.map((k) => 'updateMask.fieldPaths=$k').join('&');
+
+      // Build Firestore fields payload
+      final fields = <String, dynamic>{};
+      fieldValues.forEach((k, v) {
+        if (v == null)        fields[k] = {'nullValue': null};
+        else if (v is bool)   fields[k] = {'booleanValue': v};
+        else if (v is int)    fields[k] = {'integerValue': v.toString()};
+        else if (v is double) fields[k] = {'doubleValue': v};
+        else                  fields[k] = {'stringValue': v.toString()};
+      });
+
+      final resp = await http.patch(
+        Uri.parse('$url?$maskParams'),
+        headers: {'Authorization': 'Bearer $token', 'Content-Type': 'application/json'},
+        body: jsonEncode({'fields': fields}),
+      ).timeout(const Duration(seconds: 12));
+
+      debugPrint('[FirestoreDirect] updateDocument $collection/$docId → ${resp.statusCode}');
+      return resp.statusCode == 200;
+    } catch (e) {
+      debugPrint('[FirestoreDirect] updateDocument error: $e');
+      return false;
+    }
+  }
+
+  // ── Add (POST) a new document to a collection ─────────────────────────────
+  // Returns the new document ID or null on failure.
+  static Future<String?> addDocument(
+      String collection, Map<String, dynamic> fieldValues) async {
+    try {
+      final token = await _getToken();
+      if (token == null) return null;
+
+      final url = 'https://firestore.googleapis.com/v1/projects/$_P'
+          '/databases/(default)/documents/$collection';
+
+      // Convert values to Firestore format
+      final fields = <String, dynamic>{};
+      fieldValues.forEach((k, v) {
+        if (v == null)           fields[k] = {'nullValue': null};
+        else if (v is bool)      fields[k] = {'booleanValue': v};
+        else if (v is int)       fields[k] = {'integerValue': v.toString()};
+        else if (v is double)    fields[k] = {'doubleValue': v};
+        else if (v is List)      fields[k] = {'arrayValue': {'values': v.map((e) => {'stringValue': e.toString()}).toList()}};
+        else                     fields[k] = {'stringValue': v.toString()};
+      });
+
+      final resp = await http.post(
+        Uri.parse(url),
+        headers: {'Authorization': 'Bearer $token', 'Content-Type': 'application/json'},
+        body: jsonEncode({'fields': fields}),
+      ).timeout(const Duration(seconds: 12));
+
+      if (resp.statusCode == 200) {
+        final data = jsonDecode(resp.body) as Map<String, dynamic>;
+        final name = (data['name'] as String?) ?? '';
+        final id = name.split('/').last;
+        debugPrint('[FirestoreDirect] addDocument $collection → $id');
+        return id;
+      }
+      debugPrint('[FirestoreDirect] addDocument $collection → ${resp.statusCode}');
+    } catch (e) {
+      debugPrint('[FirestoreDirect] addDocument error: $e');
+    }
+    return null;
+  }
 
   static Future<List<Map<String, dynamic>>> getAdmins({String? level}) async {
     final all = await _getAll('admins');

@@ -103,32 +103,23 @@ class SoundService {
     try { SystemSound.play(SystemSoundType.click); } catch (_) {}
   }
 
-  // ── SPINNING announcement (once, fire-and-forget) ─────────────────────────
-  // Exact Amharic: "አሸናፊዉን ለመምረጥ እቁቡ እየዞረ ነው አሁን በመዞር ላይ ነው"
+  // ── SPINNING announcement ─────────────────────────────────────────────────
+  // Amharic ONLY — spoken 3 times as requested.
+  // Exact text: "አሸናፊዉን ለመምረጥ እቁቡ እየዞረ ነው አሁን በመዞር ላይ ነው"
   static Future<void> speakSpinningAnnouncement({String levelName = ''}) async {
     final am = _amLevel(levelName);
-    final en = _enLevel(levelName);
 
-    final script = [
-      // ── Amharic (exact requested text) ────────────────────────────
-      'አሸናፊዉን ለመምረጥ እቁቡ እየዞረ ነው',
-      'አሁን በመዞር ላይ ነው',
-      '$am እጣ ሽክርክሩ ጀምሯል',
-      'ሁሉም ዝግጁ ይሁኑ',
-      // ── gap ────────────────────────────────────────────────────────
-      '. . .',
-      // ── English ────────────────────────────────────────────────────
-      'The equb is spinning now to select the winner',
-      '$en equb draw is in progress',
-      'Get ready everyone',
-    ].join(' , ');
+    // Three repetitions of the Amharic spinning phrase
+    // Each separated by a natural pause
+    final phrase = 'አሸናፊዉን ለመምረጥ እቁቡ እየዞረ ነው . አሁን በመዞር ላይ ነው';
+    final script = '$phrase , $phrase , $phrase , $am እጣ ሽክርክሩ ጀምሯል';
 
-    await _speak(script, rate: 0.40);
+    await _speak(script, rate: 0.38);
   }
 
-  // ── WINNER announcement (loops until stop()) ───────────────────────────────
-  // Speaks the actual winner's full name and unique ID loudly in both
-  // Amharic and English.  Repeats continuously until the admin taps Close.
+  // ── WINNER announcement — Amharic ONLY, loops until Close ──────────────────
+  // Speaks: "አሸናፊው [FullName] . መታወቂያ ቁጥር [ID]" continuously.
+  // Stops only when admin taps the Close button (SoundService.stop()).
   static Future<void> speakWinnerAnnouncement({
     required String fullName,
     required String uniqueId,
@@ -137,39 +128,26 @@ class SoundService {
     final name = fullName.trim().isEmpty ? 'አሸናፊ'   : fullName.trim();
     final id   = uniqueId.trim().isEmpty ? 'ያልታወቀ' : uniqueId.trim();
     final am   = _amLevel(levelName);
-    final en   = _enLevel(levelName);
 
-    // ── Amharic announcement block (exact text requested) ─────────────────
+    // Amharic only — dynamic with real winner data
     final amBlock = [
       '$am እጣ አሸናፊ ተመርጧል',
-      'አሸናፊው $name',          // "አሸናፊው [fullName]"
-      'መታወቂያ ቁጥር $id',        // "[id]"
+      'አሸናፊው $name',
+      'መታወቂያ ቁጥር $id',
       'አሸናፊው $name ነው',
       'እንኳን ደስ አለዎ $name',
     ].join(' , ');
 
-    // ── English announcement block ─────────────────────────────────────────
-    final enBlock = [
-      'Congratulations . $en equb winner has been selected',
-      'The winner is $name',
-      'ID $id',
-      'Well done $name',
-    ].join(' , ');
+    // One round
+    final oneRound = '$amBlock . . . . . . .';
 
-    // One complete round: Amharic → long pause → English → very long pause
-    final oneRound = '$amBlock . . . . . $enBlock . . . . . . . .';
-
-    // Store for completion-handler chaining
     _loopScript = oneRound;
-
-    // Stop previous audio cleanly
     await stop();
     _looping = true;
 
     if (!kIsWeb && Platform.isLinux) {
-      // Linux: Python TTS, periodic timer for looping
       _speakLinux(oneRound, slow: true);
-      _loopTimer = Timer.periodic(const Duration(seconds: 50), (_) {
+      _loopTimer = Timer.periodic(const Duration(seconds: 45), (_) {
         if (_looping) _speakLinux(oneRound, slow: true);
       });
     } else {
@@ -178,15 +156,12 @@ class SoundService {
         await _tts.stop();
         await _tts.setVolume(1.0);
         await _tts.setPitch(1.1);
-        await _tts.setSpeechRate(0.33); // slightly slower = more dramatic
-
-        // Chain: when one round finishes start the next if still looping
+        await _tts.setSpeechRate(0.33);
         _tts.setCompletionHandler(() {
           if (_looping && _ready && _loopScript != null) {
             _tts.speak(_loopScript!);
           }
         });
-
         await _tts.speak(oneRound);
       }
     }
