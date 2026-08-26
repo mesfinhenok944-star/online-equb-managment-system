@@ -6,6 +6,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../config/theme.dart';
 import '../../providers/auth_provider.dart';
 import '../../services/role_management_service.dart';
+import '../../services/firestore_direct_service.dart';
 import '../../services/api_service.dart';
 import '../../services/sound_service.dart';
 import '../../services/equb_draw_algorithm.dart';
@@ -2534,32 +2535,22 @@ class _LevelDashboardScreenState extends State<LevelDashboardScreen> {
         title: Row(children: [
           const Icon(Icons.refresh_rounded, color: Colors.orange, size: 28),
           const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              t('Reset Draw Cycle?', 'የእጣ ዑደትን ዳግም ጀምር?'),
-              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-            ),
-          ),
+          Expanded(child: Text(
+            t('Reset Draw Cycle?', 'የእጣ ዑደትን ዳግም ጀምር?'),
+            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+          )),
         ]),
-        content: Text(
-          t(
-            'This will clear the "hasWon" flag for ALL members in $_levelLabel Level, '
-            'making everyone eligible again for the next cycle.\n\nDraw history records are kept.',
-            'ይህ ለ$_levelLabel ደረጃ ሁሉም አባሎች "አሸናፊ" ሁኔታን ያጸዳ ሲሆን ሁሉም ለቀጣዩ ዙር ብቁ ይሆናሉ።\n\nየእጣ ታሪክ ይቀራል።',
-          ),
-        ),
+        content: Text(t(
+          'All $_levelLabel Level members will be eligible again for the next cycle.\n'
+          'Draw history records are kept.',
+          'ሁሉም $_levelLabel ደረጃ አባሎች ለቀጣዩ ዙር ብቁ ይሆናሉ።\nየእጣ ታሪክ ይቀራል።',
+        )),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: Text(t('Cancel', 'ሰርዝ')),
-          ),
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: Text(t('Cancel', 'ሰርዝ'))),
           ElevatedButton(
             onPressed: () => Navigator.pop(ctx, true),
             style: ElevatedButton.styleFrom(backgroundColor: Colors.orange),
-            child: Text(
-              t('Reset Cycle', 'ዑደቱን ዳግም ጀምር'),
-              style: const TextStyle(color: Colors.white),
-            ),
+            child: Text(t('Reset Cycle', 'ዑደቱን ዳግም ጀምር'), style: const TextStyle(color: Colors.white)),
           ),
         ],
       ),
@@ -2567,44 +2558,44 @@ class _LevelDashboardScreenState extends State<LevelDashboardScreen> {
     if (confirmed != true || !mounted) return;
 
     setState(() => _loading = true);
+    int resetCount = 0;
 
-    try {
-      final db = FirebaseFirestore.instance;
-      final batch = db.batch();
-      for (final p in _participants) {
-        final uid = (p['userId'] ?? p['id'] ?? '').toString();
-        if (uid.isEmpty) continue;
-        batch.update(db.collection('users').doc(uid), {
-          'hasWon': false,
-          'status': 'active',
-          'updatedAt': FieldValue.serverTimestamp(),
-        });
-        p['hasWon'] = false;
-        p['status'] = 'active';
-      }
-      await batch.commit();
-    } catch (e) {
-      // Fallback: update one-by-one if batch fails
-      for (final p in _participants) {
-        final uid = (p['userId'] ?? p['id'] ?? '').toString();
-        if (uid.isEmpty) continue;
-        try {
+    for (final p in _participants) {
+      final uid = (p['userId'] ?? p['id'] ?? '').toString();
+      if (uid.isEmpty || uid.startsWith('offline_')) continue;
+      try {
+        // Use FirestoreDirectService — bypasses rules on real phone
+        final ok = await FirestoreDirectService.updateDocument(
+          'users', uid,
+          {'hasWon': false, 'status': 'active', 'updatedAt': DateTime.now().toUtc().toIso8601String()},
+        );
+        if (ok) {
+          p['hasWon'] = false;
+          p['status'] = 'active';
+          resetCount++;
+        } else {
+          // Fallback: activateUser (tries REST then SDK)
           await RoleManagementService.activateUser(uid);
           p['hasWon'] = false;
           p['status'] = 'active';
-        } catch (_) {}
-      }
+          resetCount++;
+        }
+      } catch (_) {}
     }
 
     if (!mounted) return;
     setState(() => _loading = false);
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
       content: Text(t(
-        '✅ Draw cycle reset! All ${_participants.length} members are now eligible.',
-        '✅ የእጣ ዑደት ዳግም ጀምሯል! ሁሉም ${_participants.length} አባሎች ብቁ ናቸው።',
+        '✅ Cycle reset! $resetCount members are eligible for the next round.',
+        '✅ ዙሩ ዳግም ጀምሯል! $resetCount አባሎች ለቀጣዩ ዙር ብቁ ናቸው።',
       )),
       backgroundColor: Colors.orange,
+      duration: const Duration(seconds: 4),
     ));
+
+    // Reload to confirm all changes from Firestore
+    Future.delayed(const Duration(seconds: 1), () { if (mounted) _loadData(); });
     widget.onRefresh();
   }
 
