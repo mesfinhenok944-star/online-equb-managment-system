@@ -225,6 +225,29 @@ class FirestoreDirectService {
     return list;
   }
 
+  // ── Public token accessor (for external callers like PaymentScreen) ────────
+  static Future<String?> getAdminToken() => _getToken();
+
+  // ── Fetch a single document by full REST URL ──────────────────────────────
+  static Future<Map<String, dynamic>?> getDocument(String url, String token) async {
+    try {
+      final resp = await http.get(
+        Uri.parse(url),
+        headers: {'Authorization': 'Bearer $token'},
+      ).timeout(const Duration(seconds: 10));
+      if (resp.statusCode == 200) {
+        return jsonDecode(resp.body) as Map<String, dynamic>;
+      }
+    } catch (e) {
+      debugPrint('[FirestoreDirect] getDocument error: $e');
+    }
+    return null;
+  }
+
+  // ── Parse Firestore fields map into plain Dart map ────────────────────────
+  static Map<String, dynamic> parseDocFields(Map<String, dynamic> fields) =>
+      _fields(fields);
+
   static Future<List<Map<String, dynamic>>> getAdmins({String? level}) async {
     final all = await _getAll('admins');
     if (level == null) return all;

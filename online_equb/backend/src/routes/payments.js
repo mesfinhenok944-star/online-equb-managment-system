@@ -249,4 +249,17 @@ router.get('/:id', async (req, res) => {
   }
 });
 
+// GET /api/v1/payments/account/:level  — return level bank account info for users
+router.get('/account/:level', async (req, res) => {
+  try {
+    const lvl = req.params.level.toLowerCase().replaceAll('equb_', '').trim();
+    if (!db) return res.status(404).json({ error: 'DB unavailable' });
+    const doc = await db.collection('equb_payment_accounts').doc(lvl).get();
+    if (!doc.exists) return res.status(404).json({ error: 'Account info not found for level: ' + lvl });
+    return res.json({ level: lvl, ...doc.data() });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;

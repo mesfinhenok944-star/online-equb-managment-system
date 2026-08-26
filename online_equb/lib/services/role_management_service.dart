@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -1351,39 +1352,43 @@ class RoleManagementService {
 
   static Future<Map<String, dynamic>> submitPayment(
       Map<String, dynamic> data) async {
-    // 1. REST API
-    try {
-      final res = await ApiService.submitEqubPayment(data);
-      if (res['success'] == true || res['paymentId'] != null) return res;
-    } catch (_) {}
+    final now = _nowIso();
+    final payload = <String, dynamic>{
+      ...data,
+      'status': 'pending_verification',
+      'level': (data['equbLevel'] ?? data['level'] ?? 'low').toString().toLowerCase().replaceAll('equb_',''),
+      'equbLevel': (data['equbLevel'] ?? data['level'] ?? 'low').toString().toLowerCase().replaceAll('equb_',''),
+      'createdAt': now,
+      'updatedAt': now,
+    };
 
-    // 2. Firestore SDK
+    // 1. REST API (backend uses Admin SDK, most reliable)
+    try {
+      final res = await ApiService.submitEqubPayment(payload);
+      if (res['success'] == true || res['paymentId'] != null) {
+        debugPrint('[submitPayment] REST ✅');
+        return res;
+      }
+    } catch (e) { debugPrint('[submitPayment] REST error: $e'); }
+
+    // 2. Firestore SDK (direct write)
     try {
       final db = _maybeDb;
       if (db != null) {
         final ref = await db.collection('payments').add({
-          ...data,
-          'status': 'pending_verification',
+          ...payload,
           'createdAt': FieldValue.serverTimestamp(),
           'updatedAt': FieldValue.serverTimestamp(),
         });
-        return {
-          'success': true,
-          'paymentId': ref.id,
-          'message': 'Payment submitted. Waiting for admin verification.',
-        };
+        debugPrint('[submitPayment] Firestore SDK ✅ ${ref.id}');
+        return {'success': true, 'paymentId': ref.id, 'message': 'Payment submitted.'};
       }
-    } catch (e) {
-      debugPrint('[submitPayment SDK] $e');
-    }
+    } catch (e) { debugPrint('[submitPayment SDK] $e'); }
 
     // 3. Offline queue
-    await OfflineService.queueOfflinePayment(data);
-    return {
-      'success': true,
-      'paymentId': 'offline_${DateTime.now().millisecondsSinceEpoch}',
-      'message': 'Payment saved offline — will sync when connected.',
-    };
+    await OfflineService.queueOfflinePayment(payload);
+    return {'success': true, 'paymentId': 'offline_${DateTime.now().millisecondsSinceEpoch}',
+            'message': 'Payment saved offline — will sync when connected.'};
   }
 
   static Future<List<Map<String, dynamic>>> getPaymentsByLevel(
@@ -1448,7 +1453,41 @@ class RoleManagementService {
     String adminId = 'admin',
     String level = 'low',
   }) async {
-    // 1. REST API
+    final now = _nowIso();
+    final updates = <String, dynamic>{
+      'status': status == 'verified' ? 'verified' : 'rejected',
+      'rejectionReason': rejectionReason,
+      'verifiedByAdminId': adminId,
+      'verifiedAt': now,
+      'updatedAt': now,
+    };
+
+    // 1. FirestoreDirectService — JWT bypasses rules
+    try {
+      final token = await FirestoreDirectService.getAdminToken();
+      if (token != null) {
+        final url = 'https://firestore.googleapis.com/v1/projects/'
+            'online-equb-managment-system/databases/(default)/documents/'
+            'payments/$paymentId';
+        // Build PATCH body
+        final fields = <String, dynamic>{};
+        updates.forEach((k, v) {
+          if (v is String) fields[k] = {'stringValue': v};
+          else if (v is bool) fields[k] = {'booleanValue': v};
+          else if (v is int) fields[k] = {'integerValue': v.toString()};
+        });
+        final body = jsonEncode({'fields': fields});
+        final resp = await (await _httpClientPatch(url, token, body));
+        if (resp == 200) {
+          debugPrint('[verifyPayment] FirestoreDirect ✅ $status');
+          return true;
+        }
+      }
+    } catch (e) {
+      debugPrint('[verifyPayment] FirestoreDirect error: $e');
+    }
+
+    // 2. REST API
     try {
       final res = await ApiService.verifyPayment({
         'paymentId': paymentId,
@@ -1459,7 +1498,7 @@ class RoleManagementService {
       if (res['success'] == true) return true;
     } catch (_) {}
 
-    // 2. Firestore SDK
+    // 3. Firestore SDK
     try {
       final db = _maybeDb;
       if (db != null) {
@@ -1467,7 +1506,7 @@ class RoleManagementService {
         final snap = await docRef.get();
         if (snap.exists) {
           await docRef.update({
-            'status': status,
+            'status': status == 'verified' ? 'verified' : 'rejected',
             'rejectionReason': rejectionReason,
             'verifiedByAdminId': adminId,
             'verifiedAt': FieldValue.serverTimestamp(),
@@ -1478,7 +1517,7 @@ class RoleManagementService {
       }
     } catch (_) {}
 
-    // 3. Offline queue
+    // 4. Offline queue
     await OfflineService.queueOfflineVerification(
       paymentId: paymentId,
       status: status,
@@ -1487,6 +1526,27 @@ class RoleManagementService {
       level: level,
     );
     return true;
+  }
+
+  // HTTP PATCH helper using dart:io HttpClient
+  static Future<int> _httpClientPatch(String url, String token, String body) async {
+    try {
+      final uri = Uri.parse(url + '?updateMask.fieldPaths=status'
+          '&updateMask.fieldPaths=rejectionReason'
+          '&updateMask.fieldPaths=verifiedByAdminId'
+          '&updateMask.fieldPaths=verifiedAt'
+          '&updateMask.fieldPaths=updatedAt');
+      final client = HttpClient();
+      final req = await client.patchUrl(uri);
+      req.headers.set('Authorization', 'Bearer $token');
+      req.headers.set('Content-Type', 'application/json');
+      req.write(body);
+      final resp = await req.close();
+      client.close();
+      return resp.statusCode;
+    } catch (_) {
+      return 500;
+    }
   }
 
   // ════════════════════════════════════════════════════════════════
