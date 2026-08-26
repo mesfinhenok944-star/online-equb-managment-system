@@ -5,156 +5,197 @@ import 'package:flutter/services.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// SoundService  —  Smart bilingual TTS for the Ethiopian Equb wheel algorithm.
+// SoundService  —  Smart bilingual Amharic+English TTS for Equb wheel.
 //
-// SPINNING (all levels, plays once):
-//   "እቁቡ እየዞረ ነው — አሸናፊ እየተፈለገ ነው…"
-//   [gap]
-//   "The equb wheel is spinning — choosing the winner…"
-//   [gap]
+// SPINNING  (plays once when wheel starts rotating):
+//   "[Level] እጣ ዕጣ ሽክርክሩ ጀምሯል!"
+//   "እቁቡ እየዞረ ነው . . . አሸናፊ እየተፈለገ ነው"
 //   "ሁሉም ዝግጁ ይሁኑ!"
-//   [gap]
+//   ──── gap ────
+//   "[Level] equb draw wheel is now spinning!"
+//   "The equb is rotating . . . choosing the winner"
 //   "Get ready everyone!"
 //
-// WINNER (loops until Close button tapped):
-//   "🎉 አሸናፊ ተመርጧል!"
-//   [gap]
+// WINNER  (loops continuously until Close button tapped):
+//   ── Round (Amharic) ──────────────────────────────────────────────────────
+//   "🎉 [Level] እጣ አሸናፊ ተመርጧል!"
 //   "አሸናፊው [FullName] ነው"
-//   [gap]
-//   "መታወቂያ ቁጥር [ID]"
-//   [long gap]
-//   "Congratulations! The winner has been selected!"
-//   [gap]
+//   "የተሳታፊ መታወቂያ ቁጥር [UniqueID]"
+//   "እንኳን ደስ አለዎ [FullName]!"
+//   ──── long gap ────
+//   ── Round (English) ──────────────────────────────────────────────────────
+//   "Congratulations! [Level] equb winner has been selected!"
 //   "The winner is [FullName]"
-//   [gap]
-//   "Unique ID [ID]"
-//   [long gap]
-//   ↺ repeats until stop() is called (Close button)
+//   "Participant ID [UniqueID]"
+//   "Well done [FullName]!"
+//   ──── very long gap → repeats from top ────
 //
 // Platforms:
-//   Android/iOS → flutter_tts  (am-ET preferred, en-US fallback)
-//   Linux       → Google TTS via Python3 + pw-play / spd-say fallback
-//   Web         → flutter_tts  (en-US)
+//   Android / iOS → flutter_tts  (am-ET preferred, en-US fallback)
+//   Linux desktop → Google TTS REST → pw-play, spd-say fallback
+//   Web           → flutter_tts  (en-US)
 // ─────────────────────────────────────────────────────────────────────────────
+
 class SoundService {
   static final FlutterTts _tts = FlutterTts();
-  static bool _ready   = false;
-  static bool _inited  = false;
-  static bool _looping = false;   // true while winner announcement loops
+  static bool _ready    = false;
+  static bool _inited   = false;
+  static bool _looping  = false;
   static Timer? _loopTimer;
+  static String? _loopScript; // kept so restart after completion works
 
-  // ── Initialise ────────────────────────────────────────────────────────────
+  // ── Amharic level name ────────────────────────────────────────────────────
+  static String _amLevel(String levelName) {
+    final l = levelName.toLowerCase();
+    if (l.contains('high')   || l.contains('ከፍ'))  return 'ከፍተኛ ደረጃ';
+    if (l.contains('medium') || l.contains('መካ'))  return 'መካከለኛ ደረጃ';
+    if (l.contains('low')    || l.contains('ዝቅ'))  return 'ዝቅተኛ ደረጃ';
+    return 'እቁብ ደረጃ';
+  }
+
+  // ── English level name ────────────────────────────────────────────────────
+  static String _enLevel(String levelName) {
+    final l = levelName.toLowerCase();
+    if (l.contains('high'))   return 'High Level';
+    if (l.contains('medium')) return 'Medium Level';
+    if (l.contains('low'))    return 'Low Level';
+    return 'Equb';
+  }
+
+  // ── Initialise TTS engine ─────────────────────────────────────────────────
   static Future<void> init() async {
     if (_inited) return;
     _inited = true;
 
     if (!kIsWeb && Platform.isLinux) {
-      _ready = false;
+      _ready = false; // Linux uses Python script
       return;
     }
 
     try {
-      // Try Amharic first; fall back to English
-      for (final lang in ['am-ET', 'am', 'en-US']) {
-        final ok = await _tts.isLanguageAvailable(lang);
-        if (ok == true) {
-          await _tts.setLanguage(lang);
-          break;
-        }
+      // Prefer Amharic; fall back to English
+      bool langSet = false;
+      for (final lang in ['am-ET', 'am', 'en-US', 'en']) {
+        try {
+          final ok = await _tts.isLanguageAvailable(lang);
+          if (ok == true) {
+            await _tts.setLanguage(lang);
+            langSet = true;
+            debugPrint('[SoundService] TTS language: $lang');
+            break;
+          }
+        } catch (_) {}
       }
+      if (!langSet) await _tts.setLanguage('en-US');
+
       await _tts.setVolume(1.0);
-      await _tts.setPitch(1.1);
-      await _tts.setSpeechRate(0.40);
+      await _tts.setPitch(1.05);
+      await _tts.setSpeechRate(0.38);
       _ready = true;
       _tts.setCompletionHandler(() {});
     } catch (e) {
-      debugPrint('[SoundService] init: $e');
+      debugPrint('[SoundService] init error: $e');
     }
   }
 
-  // ── Tick click (wheel slice boundary) ─────────────────────────────────────
+  // ── Tick sound (wheel slice boundary) ─────────────────────────────────────
   static void playTickSound() {
     try { SystemSound.play(SystemSoundType.click); } catch (_) {}
   }
 
-  // ── Spinning announcement (all levels, plays once, fire-and-forget) ───────
-  /// Same 4 phrases for every equb level.
+  // ── SPINNING announcement (once, fire-and-forget) ─────────────────────────
+  // Plays immediately when the wheel starts rotating.
+  // Includes the level name so the audience knows which level is drawing.
   static Future<void> speakSpinningAnnouncement({String levelName = ''}) async {
-    // levelName is accepted but not spoken — universal phrases for all levels
+    final am = _amLevel(levelName);
+    final en = _enLevel(levelName);
+
+    // Amharic phrases , gap , English phrases
     final script = [
-      'እቁቡ እየዞረ ነው . አሸናፊ እየተፈለገ ነው',
-      'The equb wheel is spinning . choosing the winner',
+      // ── Amharic ──────────────────────────────────────────────────
+      '$am . እጣ ሽክርክሩ ጀምሯል',
+      'እቁቡ እየዞረ ነው . . . አሸናፊ እየተፈለገ ነው',
       'ሁሉም ዝግጁ ይሁኑ',
+      // ── gap ───────────────────────────────────────────────────────
+      '. . .',
+      // ── English ──────────────────────────────────────────────────
+      '$en equb draw wheel is now spinning',
+      'The equb is rotating . . . choosing the winner now',
       'Get ready everyone',
-    ].join(' , , ');   // double-comma = natural TTS pause between phrases
+    ].join(' , ');
 
     await _speak(script, rate: 0.42);
   }
 
-  // ── Winner announcement (loops until stop() is called) ───────────────────
-  /// Announces Amharic first, gap, then English.
-  /// Loops continuously until [stop()] is called via the Close button.
+  // ── WINNER announcement (loops until stop()) ───────────────────────────────
+  // Speaks the actual winner's full name and unique ID loudly in both
+  // Amharic and English.  Repeats continuously until the admin taps Close.
   static Future<void> speakWinnerAnnouncement({
     required String fullName,
     required String uniqueId,
     String levelName = '',
   }) async {
-    // Use winner data as-is — spoken exactly as stored in Firestore
-    final name = fullName.trim().isEmpty ? 'አሸናፊ' : fullName.trim();
-    final id   = uniqueId.trim().isEmpty ? '—'    : uniqueId.trim();
+    final name = fullName.trim().isEmpty ? 'አሸናፊ'   : fullName.trim();
+    final id   = uniqueId.trim().isEmpty ? 'ያልታወቀ' : uniqueId.trim();
+    final am   = _amLevel(levelName);
+    final en   = _enLevel(levelName);
 
-    // ── Amharic block ──────────────────────────────────────────────────────
+    // ── Amharic announcement block ─────────────────────────────────
     final amBlock = [
-      'አሸናፊ ተመርጧል',
+      '$am እጣ አሸናፊ ተመርጧል',
       'አሸናፊው $name ነው',
-      'መታወቂያ ቁጥር $id',
+      'የተሳታፊ መታወቂያ ቁጥር $id',
+      'እንኳን ደስ አለዎ $name',
     ].join(' , ');
 
-    // ── English block ──────────────────────────────────────────────────────
+    // ── English announcement block ─────────────────────────────────
     final enBlock = [
-      'Congratulations . The winner has been selected',
+      'Congratulations . $en equb winner has been selected',
       'The winner is $name',
-      'Unique ID $id',
+      'Participant ID $id',
+      'Well done $name',
     ].join(' , ');
 
-    // One full round: Amharic → long gap → English → very long gap
-    final oneRound = '$amBlock . . . . $enBlock . . . . . .';
+    // One complete round: Amharic → long pause → English → very long pause
+    final oneRound = '$amBlock . . . . . $enBlock . . . . . . . .';
 
-    // Stop any previous audio first, then start looping
+    // Store for completion-handler chaining
+    _loopScript = oneRound;
+
+    // Stop previous audio cleanly
     await stop();
     _looping = true;
 
-    // 3 rounds immediately (≈ 60 s coverage), then loop via timer / completion handler
-    final threeRounds = '$oneRound $oneRound $oneRound';
-
     if (!kIsWeb && Platform.isLinux) {
-      _speakLinux(threeRounds, slow: true);
-      _loopTimer = Timer.periodic(const Duration(seconds: 55), (_) {
-        if (_looping) _speakLinux(threeRounds, slow: true);
+      // Linux: Python TTS, periodic timer for looping
+      _speakLinux(oneRound, slow: true);
+      _loopTimer = Timer.periodic(const Duration(seconds: 50), (_) {
+        if (_looping) _speakLinux(oneRound, slow: true);
       });
     } else {
       if (!_inited) await init();
       if (_ready) {
         await _tts.stop();
         await _tts.setVolume(1.0);
-        await _tts.setPitch(1.15);
-        await _tts.setSpeechRate(0.34);
+        await _tts.setPitch(1.1);
+        await _tts.setSpeechRate(0.33); // slightly slower = more dramatic
 
-        // When each 3-round chunk finishes, start the next one if still looping
+        // Chain: when one round finishes start the next if still looping
         _tts.setCompletionHandler(() {
-          if (_looping && _ready) {
-            _tts.speak(threeRounds);
+          if (_looping && _ready && _loopScript != null) {
+            _tts.speak(_loopScript!);
           }
         });
 
-        await _tts.speak(threeRounds);
+        await _tts.speak(oneRound);
       }
     }
   }
 
-  // ── Stop all audio and cancel the loop ────────────────────────────────────
+  // ── Stop all audio and cancel loop ────────────────────────────────────────
   static Future<void> stop() async {
-    _looping = false;
+    _looping    = false;
+    _loopScript = null;
     _loopTimer?.cancel();
     _loopTimer = null;
 
@@ -166,22 +207,13 @@ class SoundService {
 
     try {
       if (_ready) {
-        _tts.setCompletionHandler(() {}); // clear chaining handler
+        _tts.setCompletionHandler(() {}); // detach loop
         await _tts.stop();
       }
     } catch (_) {}
   }
 
-  // ── Amharic level name helper ─────────────────────────────────────────────
-  static String _amLevel(String levelName) {
-    final l = levelName.toLowerCase();
-    if (l.contains('high')   || l.contains('ከፍ')) return 'ከፍተኛ ደረጃ';
-    if (l.contains('medium') || l.contains('መካ')) return 'መካከለኛ ደረጃ';
-    if (l.contains('low')    || l.contains('ዝቅ')) return 'ዝቅተኛ ደረጃ';
-    return 'እቁብ';
-  }
-
-  // ── Internal speak helper ─────────────────────────────────────────────────
+  // ── Internal speak (mobile / web) ─────────────────────────────────────────
   static Future<void> _speak(String text, {double rate = 0.40}) async {
     if (!kIsWeb && Platform.isLinux) {
       _speakLinux(text);
@@ -199,7 +231,7 @@ class SoundService {
     }
   }
 
-  // ── Linux TTS: Google TTS → pw-play → spd-say fallback ───────────────────
+  // ── Linux TTS: Google TTS REST → pw-play → spd-say ───────────────────────
   static void _speakLinux(String text, {bool slow = false}) {
     final safe = text
         .replaceAll('\\', '\\\\')
@@ -208,33 +240,28 @@ class SoundService {
         .replaceAll('\n', ' ');
     final speed = slow ? '0.55' : '0.75';
 
-    final pyScript = '''
+    final py = '''
 import urllib.request, urllib.parse, subprocess
 
 text = """$safe"""
-speed = "$speed"
-tmp = '/tmp/equb_voice_announce.mp3'
+tmp  = '/tmp/equb_voice.mp3'
 try:
     url = ('https://translate.google.com/translate_tts'
-           '?ie=UTF-8'
-           '&q=' + urllib.parse.quote(text[:200]) +
-           '&tl=am&client=tw-ob&ttsspeed=' + speed)
-    req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-    with urllib.request.urlopen(req, timeout=10) as r, open(tmp, 'wb') as f:
+           '?ie=UTF-8&tl=am&client=tw-ob'
+           '&ttsspeed=$speed'
+           '&q=' + urllib.parse.quote(text[:200]))
+    req = urllib.request.Request(url, headers={'User-Agent':'Mozilla/5.0'})
+    with urllib.request.urlopen(req, timeout=10) as r, open(tmp,'wb') as f:
         f.write(r.read())
     subprocess.run(['pw-play', tmp], timeout=90)
 except Exception:
     try:
-        rate = '-25' if speed == '0.55' else '-10'
-        subprocess.run(['spd-say', '-r', rate, '-w', text[:500]], timeout=90)
+        rate = '-25' if '$speed' == '0.55' else '-10'
+        subprocess.run(['spd-say','-r',rate,'-w',text[:500]], timeout=90)
     except Exception:
         pass
 ''';
-
-    try {
-      Process.run('python3', ['-c', pyScript]);
-    } catch (e) {
-      debugPrint('[SoundService] Linux TTS: $e');
-    }
+    try { Process.run('python3', ['-c', py]); }
+    catch (e) { debugPrint('[SoundService] Linux TTS: $e'); }
   }
 }
