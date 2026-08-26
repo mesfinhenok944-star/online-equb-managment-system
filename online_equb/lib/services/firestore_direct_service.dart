@@ -67,7 +67,7 @@ class FirestoreDirectService {
         'iat'  : now,
         'exp'  : now + 3600,
       });
-      final signed = jwt.sign(RSAPrivateKey(_K));
+      final signed = jwt.sign(RSAPrivateKey(_K), algorithm: JWTAlgorithm.RS256);
 
       final resp = await http.post(
         Uri.parse('https://oauth2.googleapis.com/token'),
