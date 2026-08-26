@@ -834,6 +834,84 @@ class RoleManagementService {
       'updatedAt': nowIso,
     };
 
+    // ── 0. FirestoreDirectService — service account JWT, bypasses rules ───────
+    // PRIMARY on real Android phone (no server, works on any network)
+    try {
+      final now2 = _nowIso();
+      // Check for existing user with same email
+      if (email.isNotEmpty) {
+        final existing = await FirestoreDirectService.getUsersByLevel(equbLevel);
+        final dup = existing.where((u) =>
+            (u['email'] ?? '').toString().toLowerCase() == email).toList();
+        if (dup.isNotEmpty) {
+          final docId = (dup.first['userId'] ?? dup.first['id'] ?? '').toString();
+          if (docId.isNotEmpty) {
+            final ok = await FirestoreDirectService.updateDocument('users', docId, {
+              ...userData,
+              'updatedAt': now2,
+            });
+            if (ok) {
+              await OfflineService.saveUserOffline(equbLevel, {...userData, 'userId': docId, 'id': docId});
+              return {'success': true, 'id': docId, 'message': 'User updated. ተጠቃሚ ተሻሽሏል።'};
+            }
+          }
+        }
+      }
+      // Check uniqueId uniqueness
+      if (uniqueId.isNotEmpty) {
+        final taken = await isUniqueIdTaken(uniqueId);
+        if (taken) return {'success': false, 'error': 'Unique ID "$uniqueId" is already registered. / ልዩ መታወቂያ ቀድሞ ተምዝግቧል።'};
+      }
+      // Add new user
+      final newId = await FirestoreDirectService.addDocument('users', {...userData, 'createdAt': now2});
+      if (newId != null) {
+        final cacheData = {...userData, 'userId': newId, 'id': newId};
+        await OfflineService.saveUserOffline(equbLevel, cacheData);
+        debugPrint('[createUser] FirestoreDirect ✅ $newId');
+        return {'success': true, 'id': newId, 'message': 'User registered. ተጠቃሚ ተመዝግቧል።'};
+      }
+    } catch (e) { debugPrint('[createUser] FirestoreDirect error: $e'); }
+
+    // ── 1. Firestore SDK (PRIMARY on real Android/iOS — direct cloud write) ─
+    // ── 1. Firestore SDK (PRIMARY on real Android/iOS — direct cloud write) ─
+    // ── 0. FirestoreDirectService — service account JWT, bypasses rules ───────
+    // PRIMARY on real Android phone (no server, works on any network)
+    try {
+      final now2 = _nowIso();
+      // Check for existing user with same email
+      if (email.isNotEmpty) {
+        final existing = await FirestoreDirectService.getUsersByLevel(equbLevel);
+        final dup = existing.where((u) =>
+            (u['email'] ?? '').toString().toLowerCase() == email).toList();
+        if (dup.isNotEmpty) {
+          final docId = (dup.first['userId'] ?? dup.first['id'] ?? '').toString();
+          if (docId.isNotEmpty) {
+            final ok = await FirestoreDirectService.updateDocument('users', docId, {
+              ...userData,
+              'updatedAt': now2,
+            });
+            if (ok) {
+              await OfflineService.saveUserOffline(equbLevel, {...userData, 'userId': docId, 'id': docId});
+              return {'success': true, 'id': docId, 'message': 'User updated. ተጠቃሚ ተሻሽሏል።'};
+            }
+          }
+        }
+      }
+      // Check uniqueId uniqueness
+      if (uniqueId.isNotEmpty) {
+        final taken = await isUniqueIdTaken(uniqueId);
+        if (taken) return {'success': false, 'error': 'Unique ID "$uniqueId" is already registered. / ልዩ መታወቂያ ቀድሞ ተምዝግቧል።'};
+      }
+      // Add new user
+      final newId = await FirestoreDirectService.addDocument('users', {...userData, 'createdAt': now2});
+      if (newId != null) {
+        final cacheData = {...userData, 'userId': newId, 'id': newId};
+        await OfflineService.saveUserOffline(equbLevel, cacheData);
+        debugPrint('[createUser] FirestoreDirect ✅ $newId');
+        return {'success': true, 'id': newId, 'message': 'User registered. ተጠቃሚ ተመዝግቧል።'};
+      }
+    } catch (e) { debugPrint('[createUser] FirestoreDirect error: $e'); }
+
     // ── 1. Firestore SDK (PRIMARY on real Android/iOS — direct cloud write) ─
     try {
       final db = _maybeDb;
@@ -939,154 +1017,170 @@ class RoleManagementService {
 
   static Future<bool> updateUser(
       String userId, Map<String, dynamic> updates) async {
-    final firstName = (updates['firstName'] ?? '').toString().trim();
+    if (userId.isEmpty) return false;
+    final firstName  = (updates['firstName']  ?? '').toString().trim();
     final middleName = (updates['middleName'] ?? '').toString().trim();
-    final lastName = (updates['lastName'] ?? '').toString().trim();
-    final fullName =
-        '$firstName $middleName $lastName'.replaceAll(RegExp(r'\s+'), ' ').trim();
+    final lastName   = (updates['lastName']   ?? '').toString().trim();
+    final fullName = '$firstName $middleName $lastName'.replaceAll(RegExp(r'\s+'), ' ').trim();
     final lvl = (updates['equbLevel'] ?? updates['level'] ?? 'low').toString().toLowerCase();
-    bool updated = false;
+    final payload = <String, dynamic>{
+      ...updates,
+      if (fullName.isNotEmpty) 'fullName': fullName,
+      'updatedAt': _nowIso(),
+    };
+    payload.remove('userId'); payload.remove('createdAt');
 
-    // 1. REST API
+    // 1. FirestoreDirectService — JWT bypasses rules
     try {
-      final res = await ApiService.adminUpdateUser(userId, {
-        ...updates,
-        if (fullName.isNotEmpty) 'fullName': fullName,
-        'updatedAt': _nowIso(),
-      });
-      if (!res.containsKey('error')) updated = true;
-    } catch (_) {}
+      final ok = await FirestoreDirectService.updateDocument('users', userId, payload);
+      if (ok) {
+        await OfflineService.saveUserOffline(lvl, {...payload, 'userId': userId, 'id': userId});
+        debugPrint('[updateUser] FirestoreDirect OK');
+        return true;
+      }
+    } catch (e) { debugPrint('[updateUser] FirestoreDirect: $e'); }
 
-    // 2. Firestore SDK
+    // 2. REST API
     try {
-      final db = _maybeDb;
-      if (db != null) {
-        final payload = <String, dynamic>{
-          ...updates,
-          if (fullName.isNotEmpty) 'fullName': fullName,
-          'updatedAt': FieldValue.serverTimestamp(),
-        };
-        payload.remove('userId');
-        payload.remove('createdAt');
-        await db
-            .collection('users')
-            .doc(userId)
-            .set(payload, SetOptions(merge: true));
-        updated = true;
+      final res = await ApiService.adminUpdateUser(userId, payload);
+      if (!res.containsKey('error')) {
+        await OfflineService.saveUserOffline(lvl, {...payload, 'userId': userId, 'id': userId});
+        return true;
       }
     } catch (_) {}
 
-    // 3. Local cache
+    // 3. Firestore SDK
     try {
-      await OfflineService.saveUserOffline(lvl, {
-        ...updates,
-        'userId': userId,
-        'id': userId,
-        if (fullName.isNotEmpty) 'fullName': fullName,
-      });
-      updated = true;
+      final db = _maybeDb;
+      if (db != null) {
+        await db.collection('users').doc(userId).set({...payload, 'updatedAt': FieldValue.serverTimestamp()}, SetOptions(merge: true));
+        return true;
+      }
     } catch (_) {}
 
-    return updated;
+    // 4. Cache only
+    await OfflineService.saveUserOffline(lvl, {...payload, 'userId': userId, 'id': userId});
+    return true;
   }
 
   static Future<bool> deleteUser(String userIdOrEmail) async {
     final target = userIdOrEmail.trim();
     if (target.isEmpty) return false;
     bool deleted = false;
+    final now = _nowIso();
 
-    // 1. REST API
+    // 1. FirestoreDirectService — JWT bypasses rules (PRIMARY on phone)
     try {
-      final res = await ApiService.adminDeleteUser(target);
-      if (!res.containsKey('error')) deleted = true;
-    } catch (_) {}
-
-    // 2. Firestore SDK
-    try {
-      final db = _maybeDb;
-      if (db != null) {
-        try {
-          await db.collection('users').doc(target).update({
-            'status': 'deleted',
-            'deletedAt': FieldValue.serverTimestamp(),
-            'updatedAt': FieldValue.serverTimestamp(),
-          });
-          deleted = true;
-        } catch (_) {}
-        final snap = await db.collection('users').get();
-        for (final doc in snap.docs) {
-          final d = doc.data();
-          final uEmail = (d['email'] ?? '').toString().toLowerCase();
-          final uUnique = (d['uniqueId'] ?? '').toString();
-          if (doc.id == target ||
-              uEmail == target.toLowerCase() ||
-              uUnique == target) {
-            await db.collection('users').doc(doc.id).update({
-              'status': 'deleted',
-              'deletedAt': FieldValue.serverTimestamp(),
-              'updatedAt': FieldValue.serverTimestamp(),
-            });
-            deleted = true;
+      // Try direct doc ID first
+      final ok = await FirestoreDirectService.updateDocument('users', target,
+          {'status': 'deleted', 'deletedAt': now, 'updatedAt': now});
+      if (ok) { deleted = true; debugPrint('[deleteUser] FirestoreDirect OK (by id)'); }
+      
+      if (!deleted) {
+        // Search by email / uniqueId across levels
+        for (final lvl in ['low', 'medium', 'high']) {
+          final users = await FirestoreDirectService.getUsersByLevel(lvl);
+          for (final u in users) {
+            final uId     = (u['userId'] ?? u['id'] ?? '').toString();
+            final uEmail  = (u['email']    ?? '').toString().toLowerCase();
+            final uUnique = (u['uniqueId'] ?? '').toString();
+            if (uId == target || uEmail == target.toLowerCase() || uUnique == target) {
+              if (uId.isNotEmpty) {
+                await FirestoreDirectService.updateDocument('users', uId,
+                    {'status': 'deleted', 'deletedAt': now, 'updatedAt': now});
+                deleted = true;
+                debugPrint('[deleteUser] FirestoreDirect OK (found by search)');
+              }
+            }
           }
         }
       }
-    } catch (_) {}
+    } catch (e) { debugPrint('[deleteUser] FirestoreDirect: $e'); }
 
-    // 3. Local cache
+    // 2. REST API
+    if (!deleted) {
+      try {
+        final res = await ApiService.adminDeleteUser(target);
+        if (!res.containsKey('error')) deleted = true;
+      } catch (_) {}
+    }
+
+    // 3. Firestore SDK
+    if (!deleted) {
+      try {
+        final db = _maybeDb;
+        if (db != null) {
+          await db.collection('users').doc(target).update({'status': 'deleted', 'deletedAt': FieldValue.serverTimestamp(), 'updatedAt': FieldValue.serverTimestamp()});
+          deleted = true;
+        }
+      } catch (_) {}
+    }
+
+    // 4. Remove from local cache
     for (final lvl in ['low', 'medium', 'high']) {
       try {
         final users = await OfflineService.getCachedUsers(lvl);
         users.removeWhere((u) {
           final id = (u['userId'] ?? u['id'] ?? '').toString();
-          final email = (u['email'] ?? '').toString().toLowerCase();
-          final uniqueId = (u['uniqueId'] ?? '').toString();
-          return id == target ||
-              email == target.toLowerCase() ||
-              uniqueId == target;
+          final em = (u['email'] ?? '').toString().toLowerCase();
+          final un = (u['uniqueId'] ?? '').toString();
+          return id == target || em == target.toLowerCase() || un == target;
         });
         await OfflineService.cacheUsers(lvl, users);
-        deleted = true;
       } catch (_) {}
     }
+
     return deleted;
   }
 
   static Future<bool> suspendUser(String userId) async {
-    bool done = false;
+    if (userId.isEmpty) return false;
+    final now = _nowIso();
+    
+    // 1. FirestoreDirectService
     try {
-      await ApiService.adminSuspendUser(userId);
-      done = true;
-    } catch (_) {}
+      final ok = await FirestoreDirectService.updateDocument('users', userId,
+          {'status': 'suspended', 'suspendedAt': now, 'updatedAt': now});
+      if (ok) { debugPrint('[suspendUser] FirestoreDirect OK'); return true; }
+    } catch (e) { debugPrint('[suspendUser] FirestoreDirect: $e'); }
+
+    // 2. REST API
+    try { await ApiService.adminSuspendUser(userId); return true; } catch (_) {}
+
+    // 3. Firestore SDK
     try {
       final db = _maybeDb;
       if (db != null) {
-        await db.collection('users').doc(userId).set({
-          'status': 'suspended',
-          'updatedAt': FieldValue.serverTimestamp(),
-        }, SetOptions(merge: true));
-        done = true;
+        await db.collection('users').doc(userId).set({'status': 'suspended', 'updatedAt': FieldValue.serverTimestamp()}, SetOptions(merge: true));
+        return true;
       }
     } catch (_) {}
-    return done;
+    return false;
   }
 
   static Future<bool> activateUser(String userId) async {
-    bool done = false;
+    if (userId.isEmpty) return false;
+    final now = _nowIso();
+
+    // 1. FirestoreDirectService
     try {
-      await ApiService.adminActivateUser(userId);
-      done = true;
-    } catch (_) {}
+      final ok = await FirestoreDirectService.updateDocument('users', userId,
+          {'status': 'active', 'updatedAt': now});
+      if (ok) { debugPrint('[activateUser] FirestoreDirect OK'); return true; }
+    } catch (e) { debugPrint('[activateUser] FirestoreDirect: $e'); }
+
+    // 2. REST API
+    try { await ApiService.adminActivateUser(userId); return true; } catch (_) {}
+
+    // 3. Firestore SDK
     try {
       final db = _maybeDb;
       if (db != null) {
-        await db.collection('users').doc(userId).set({
-          'status': 'active',
-          'updatedAt': FieldValue.serverTimestamp(),
-        }, SetOptions(merge: true));
-        done = true;
+        await db.collection('users').doc(userId).set({'status': 'active', 'updatedAt': FieldValue.serverTimestamp()}, SetOptions(merge: true));
+        return true;
       }
     } catch (_) {}
-    return done;
+    return false;
   }
 
   // ════════════════════════════════════════════════════════════════

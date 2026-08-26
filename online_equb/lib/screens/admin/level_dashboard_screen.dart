@@ -1237,14 +1237,17 @@ class _LevelDashboardScreenState extends State<LevelDashboardScreen> {
 
     if (!mounted) return;
 
-    // Show winner dialog + speak announcement
+    // Show winner dialog and Amharic announcement
     _showWinnerDialog(winner);
     widget.onRefresh();
 
-    // Reload from Firestore in background so list is authoritative
-    _loadData();
+    // Delay reload by 2s so JWT write propagates to Firestore first.
+    // This ensures the winner has hasWon=true before _loadData re-fetches,
+    // so they are excluded from the eligible list in the next draw.
+    Future.delayed(const Duration(seconds: 2), () {
+      if (mounted) _loadData();
+    });
   }
-
   void _showWinnerDialog(Map<String, dynamic> winner) {
     final name = (winner['fullName'] ?? winner['firstName'] ?? '').toString();
     final uid = (winner['uniqueId'] ?? winner['userId'] ?? winner['id'] ?? '').toString();
@@ -1637,7 +1640,10 @@ class _LevelDashboardScreenState extends State<LevelDashboardScreen> {
         ),
       ),
     );
-    if (result == true) _loadData();
+    if (result == true) {
+      await Future.delayed(const Duration(seconds: 1));
+      if (mounted) _loadData();
+    }
   }
 
   Future<void> _editUser(Map<String, dynamic> user) async {
@@ -1668,40 +1674,44 @@ class _LevelDashboardScreenState extends State<LevelDashboardScreen> {
   }
 
   Future<void> _toggleUserStatus(Map<String, dynamic> user) async {
-    final userId = user['userId'] ?? user['id'] ?? '';
+    final userId = (user['userId'] ?? user['id'] ?? '').toString();
+    if (userId.isEmpty) return;
     final isSuspended = (user['status'] ?? 'active') == 'suspended';
-    bool ok;
-    if (isSuspended) {
-      ok = await RoleManagementService.activateUser(userId);
-    } else {
-      ok = await RoleManagementService.suspendUser(userId);
-    }
+    final ok = isSuspended
+        ? await RoleManagementService.activateUser(userId)
+        : await RoleManagementService.suspendUser(userId);
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
       content: Text(ok
-          ? (isSuspended
-              ? t('User activated.', 'ተጠቃሚ ንቁ ሆኗል።')
-              : t('User suspended.', 'ተጠቃሚ ታግዷል።'))
+          ? (isSuspended ? t('User activated.', 'ተጠቃሚ ንቁ ሆኗል።') : t('User suspended.', 'ተጠቃሚ ታግዷል።'))
           : t('Action failed.', 'ተግባሩ አልተሳካም።')),
       backgroundColor: ok ? AppColors.success : AppColors.error,
     ));
-    if (ok) _loadData();
+    if (ok) {
+      // Instant local update
+      setState(() {
+        for (final p in _participants) {
+          if ((p['userId'] ?? p['id'] ?? '').toString() == userId) {
+            p['status'] = isSuspended ? 'active' : 'suspended';
+            break;
+          }
+        }
+      });
+      _loadData(); // background refresh
+    }
   }
 
   Future<void> _confirmDeleteUser(Map<String, dynamic> user) async {
-    final name = user['fullName'] ?? '';
+    final name   = (user['fullName'] ?? user['firstName'] ?? '').toString();
+    final userId = (user['userId'] ?? user['id'] ?? '').toString();
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
         title: Text(t('Delete User', 'ተጠቃሚ ሰርዝ')),
-        content: Text(t(
-          'Delete "$name"? This cannot be undone.',
-          '"$name"ን ይሰርዙ? ሊቀለበስ አይችልም።',
-        )),
+        content: Text(t('Delete "$name"? This cannot be undone.',
+                        '"$name"ን ይሰርዙ? ሊቀለበስ አይችልም።')),
         actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: Text(t('Cancel', 'ሰርዝ'))),
+          TextButton(onPressed: () => Navigator.pop(context, false), child: Text(t('Cancel', 'ሰርዝ'))),
           ElevatedButton(
             onPressed: () => Navigator.pop(context, true),
             style: ElevatedButton.styleFrom(backgroundColor: AppColors.error),
@@ -1711,16 +1721,18 @@ class _LevelDashboardScreenState extends State<LevelDashboardScreen> {
       ),
     );
     if (confirmed != true) return;
-    final ok = await RoleManagementService.deleteUser(
-        user['userId'] ?? user['id'] ?? '');
+    final ok = await RoleManagementService.deleteUser(userId);
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text(ok
-          ? t('User deleted.', 'ተጠቃሚ ተሰርዟል።')
-          : t('Failed to delete.', 'ሊሰረዝ አልቻለም።')),
+      content: Text(ok ? t('User deleted.', 'ተጠቃሚ ተሰርዟል።') : t('Failed to delete.', 'ሊሰረዝ አልቻለም።')),
       backgroundColor: ok ? AppColors.success : AppColors.error,
     ));
-    if (ok) _loadData();
+    if (ok) {
+      // Instant local removal — no wait for Firestore reload
+      setState(() => _participants.removeWhere((p) =>
+          (p['userId'] ?? p['id'] ?? '').toString() == userId));
+      _loadData(); // background sync
+    }
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
