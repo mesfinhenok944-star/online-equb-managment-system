@@ -1,193 +1,199 @@
 import 'dart:math';
 
-/// A reusable local draw algorithm for EQUB administration.
-///
-/// This service performs secure random draws without replacement, marks
-/// winners as excluded from future rounds, and helps generate draw records.
+// ─────────────────────────────────────────────────────────────────────────────
+// EqubDrawAlgorithm
+//
+// FREE RANDOM SELECTION — cryptographically secure draw for Ethiopian Equb.
+//
+// WINNER EXCLUSION RULE:
+//   Once a participant wins (hasWon = true), they are permanently removed
+//   from all future draw rounds at their equb level.
+//
+//   Example with 100 users:
+//     Round 1: 100 eligible → 1 winner drawn → hasWon = true
+//     Round 2:  99 eligible → 1 winner drawn → hasWon = true
+//     Round 3:  98 eligible → ...continues until all have won
+//
+// Works identically for Low, Medium, and High equb levels.
+// ─────────────────────────────────────────────────────────────────────────────
+
 class EqubDrawAlgorithm {
-  static final Random _secureRandom = Random.secure();
+  static final Random _secure = Random.secure();
 
+  // ── Eligible participants ─────────────────────────────────────────────────
+  // Only participants who:
+  //   • Have NOT won before  (hasWon != true)
+  //   • Are currently active (status == 'active')
+  // This enforces the winner-exclusion rule.
   static List<Map<String, dynamic>> eligibleParticipants(
-      List<Map<String, dynamic>> participants) {
-    return participants
-        .where((p) => p['hasWon'] != true && p['status'] != 'removed')
-        .toList();
+      List<Map<String, dynamic>> all) {
+    return all.where((p) {
+      final won    = p['hasWon'] == true;
+      final status = (p['status'] ?? 'active').toString().toLowerCase();
+      return !won && status == 'active';
+    }).toList();
   }
 
-  static int remainingCount(List<Map<String, dynamic>> participants) {
-    return eligibleParticipants(participants).length;
-  }
+  // ── Counts ────────────────────────────────────────────────────────────────
+  static int remainingCount(List<Map<String, dynamic>> all) =>
+      eligibleParticipants(all).length;
 
-  static int selectedCount(List<Map<String, dynamic>> participants) {
-    return participants.where((p) => p['hasWon'] == true).length;
-  }
+  static int winnersCount(List<Map<String, dynamic>> all) =>
+      all.where((p) => p['hasWon'] == true).length;
 
-  static int? chooseWinnerIndex(List<Map<String, dynamic>> participants) {
-    final eligible = eligibleParticipants(participants);
+  // ── FREE RANDOM SELECTION ─────────────────────────────────────────────────
+  // Returns the index of the selected winner inside the FULL participants list.
+  // Returns null if there are no eligible participants.
+  //
+  // Uses dart:math Random.secure() — cryptographically secure PRNG.
+  // Every eligible participant has an exactly equal probability of winning.
+  static int? chooseWinnerIndex(List<Map<String, dynamic>> all) {
+    final eligible = eligibleParticipants(all);
     if (eligible.isEmpty) return null;
-    final eligibleWinner = eligible[_secureRandom.nextInt(eligible.length)];
-    return participants.indexWhere((p) =>
-        p['participantId'] == eligibleWinner['participantId'] ||
-        p['userId'] == eligibleWinner['userId'] ||
-        p['id'] == eligibleWinner['id']);
+
+    // Cryptographically secure free random pick
+    final picked = eligible[_secure.nextInt(eligible.length)];
+
+    // Map back to the full list index
+    final pickedId = _id(picked);
+    return all.indexWhere((p) =>
+        _id(p) == pickedId ||
+        p['participantId'] == pickedId ||
+        p['userId']        == pickedId ||
+        p['id']            == pickedId);
   }
 
+  // ── Mark winner ───────────────────────────────────────────────────────────
+  // Mutates the participant map:  hasWon = true, status = 'selected'.
+  // Adds a draw record to drawHistory.
   static Map<String, dynamic>? markWinnerByIndex(
     int index,
-    List<Map<String, dynamic>> participants,
+    List<Map<String, dynamic>> all,
     List<Map<String, dynamic>> drawHistory,
     String level,
   ) {
-    if (index < 0 || index >= participants.length) return null;
-    final participant = participants[index];
-    if (participant['hasWon'] == true || participant['status'] == 'removed') {
-      return null;
-    }
-    final selectedAt = DateTime.now().toLocal();
-    final ethiopian = _ethiopianDateFromGregorian(selectedAt);
-    final drawDate =
-        '${ethiopian['day'].toString().padLeft(2, '0')}/${ethiopian['month'].toString().padLeft(2, '0')}/${ethiopian['year']}';
-    final drawTime =
-        '${selectedAt.hour.toString().padLeft(2, '0')}:${selectedAt.minute.toString().padLeft(2, '0')}:${selectedAt.second.toString().padLeft(2, '0')}';
+    if (index < 0 || index >= all.length) return null;
+    final p = all[index];
 
-    participant['hasWon'] = true;
-    participant['selectedAt'] = selectedAt.toIso8601String();
-    participant['status'] = 'selected';
-    participant['roundNumber'] = drawHistory.length + 1;
+    if (p['hasWon'] == true) return null; // already won — skip
+    final st = (p['status'] ?? 'active').toString().toLowerCase();
+    if (st == 'removed' || st == 'deleted') return null;
 
-    final drawRecord = {
-      'drawNumber': drawHistory.length + 1,
-      'winnerName': participant['firstName'] ??
-          participant['fullName'] ??
-          participant['name'] ??
-          'Winner',
-      'participantId': participant['participantId'] ??
-          participant['userId'] ??
-          participant['id'],
-      'drawDate': drawDate,
-      'drawTime': drawTime,
-      'prizeAmount': _levelPrize(level, participants.length),
-    };
-    drawHistory.add(drawRecord);
-    return participant;
+    final now       = DateTime.now().toLocal();
+    final eth       = _ethDate(now);
+    final drawDate  = '${_pad(eth['day']!)}/${_pad(eth['month']!)}/${eth['year']}';
+    final drawTime  = '${_pad(now.hour)}:${_pad(now.minute)}:${_pad(now.second)}';
+    final roundNum  = drawHistory.length + 1;
+
+    // Mark winner permanently
+    p['hasWon']     = true;
+    p['status']     = 'selected';
+    p['selectedAt'] = now.toIso8601String();
+    p['roundNumber'] = roundNum;
+
+    drawHistory.add({
+      'drawNumber':   roundNum,
+      'winnerName':   _name(p),
+      'winnerId':     _id(p),
+      'winnerUniqueId': (p['uniqueId'] ?? _id(p)).toString(),
+      'participantId': p['participantId'] ?? _id(p),
+      'drawDate':     drawDate,
+      'drawTime':     drawTime,
+      'equbLevel':    level,
+      'prizeAmount':  _prize(level, all.length),
+      'createdAt':    now.toIso8601String(),
+      'status':       'completed',
+    });
+
+    return p;
   }
 
+  // ── selectWinner (convenience wrapper) ───────────────────────────────────
+  // Picks a winner and marks them.  Returns the winner map or null.
   static Map<String, dynamic>? selectWinner(
-    List<Map<String, dynamic>> participants,
+    List<Map<String, dynamic>> all,
     List<Map<String, dynamic>> drawHistory,
     String level,
   ) {
-    final eligible = eligibleParticipants(participants);
-    if (eligible.isEmpty) return null;
-
-    final winnerIndex = _secureRandom.nextInt(eligible.length);
-    final winner = eligible[winnerIndex];
-    final selectedAt = DateTime.now().toLocal();
-    final ethiopian = _ethiopianDateFromGregorian(selectedAt);
-    final drawDate =
-        '${ethiopian['day'].toString().padLeft(2, '0')}/${ethiopian['month'].toString().padLeft(2, '0')}/${ethiopian['year']}';
-    final drawTime =
-        '${selectedAt.hour.toString().padLeft(2, '0')}:${selectedAt.minute.toString().padLeft(2, '0')}:${selectedAt.second.toString().padLeft(2, '0')}';
-
-    winner['hasWon'] = true;
-    winner['selectedAt'] = selectedAt.toIso8601String();
-    winner['status'] = 'selected';
-    winner['roundNumber'] = drawHistory.length + 1;
-
-    final drawRecord = {
-      'drawNumber': drawHistory.length + 1,
-      'winnerName': winner['firstName'] ??
-          winner['fullName'] ??
-          winner['name'] ??
-          'Winner',
-      'participantId':
-          winner['participantId'] ?? winner['userId'] ?? winner['id'],
-      'drawDate': drawDate,
-      'drawTime': drawTime,
-      'prizeAmount': _levelPrize(level, participants.length),
-    };
-
-    drawHistory.add(drawRecord);
-    return winner;
+    final idx = chooseWinnerIndex(all);
+    if (idx == null) return null;
+    return markWinnerByIndex(idx, all, drawHistory, level);
   }
 
-  static Map<String, int> _ethiopianDateFromGregorian(DateTime date) {
-    final jd = _gregorianToJdn(date.year, date.month, date.day);
-    const ethioEpoch = 1723856;
-    final int r = (jd - ethioEpoch) % 1461;
-    final int n = r % 365 + 365 * (r ~/ 1461);
-    final year = 4 * ((jd - ethioEpoch) ~/ 1461) + (r ~/ 365) + 1;
-    final month = (n ~/ 30) + 1;
-    final day = (n % 30) + 1;
-    return {'year': year, 'month': month, 'day': day};
-  }
-
-  static int _gregorianToJdn(int year, int month, int day) {
-    final a = ((14 - month) ~/ 12);
-    final y = year + 4800 - a;
-    final m = month + 12 * a - 3;
-    return day +
-        ((153 * m + 2) ~/ 5) +
-        365 * y +
-        (y ~/ 4) -
-        (y ~/ 100) +
-        (y ~/ 400) -
-        32045;
-  }
-
-  static double _levelPrize(String level, int totalParticipants) {
-    switch (level) {
-      case 'high':
-        return totalParticipants * 50000.0 * 0.9;
-      case 'medium':
-        return totalParticipants * 10000.0 * 0.93;
-      case 'low':
-      default:
-        return totalParticipants * 5000.0 * 0.95;
-    }
-  }
-
+  // ── Add / remove participant ──────────────────────────────────────────────
   static void addParticipant(
-      List<Map<String, dynamic>> participants, Map<String, dynamic> user) {
-    final userId = (user['userId'] ?? user['id'] ?? '').toString();
-    final exists = participants.any((p) =>
-        p['userId'] == userId ||
-        p['id'] == userId ||
-        p['participantId'] == userId);
-    if (exists) return;
+      List<Map<String, dynamic>> all, Map<String, dynamic> user) {
+    final uid = _id(user);
+    if (all.any((p) => _id(p) == uid)) return; // already in list
 
     final fullName = (user['fullName'] ?? '').toString().trim();
-    final firstName = (user['firstName'] ?? '').toString().trim();
-    final lastName = (user['lastName'] ?? '').toString().trim();
-    final displayName = fullName.isNotEmpty
+    final first    = (user['firstName'] ?? '').toString().trim();
+    final last     = (user['lastName']  ?? '').toString().trim();
+    final display  = fullName.isNotEmpty
         ? fullName
-        : '$firstName $lastName'.trim().isNotEmpty
-            ? '$firstName $lastName'.trim()
-            : 'Unnamed User';
+        : '$first $last'.trim().isNotEmpty
+            ? '$first $last'.trim()
+            : 'Participant ${all.length + 1}';
 
-    participants.add({
-      'participantId': user['uniqueId'] ??
-          user['participantId'] ??
-          'local_${DateTime.now().millisecondsSinceEpoch}',
-      'userId': userId,
-      'fullName': displayName,
-      'firstName': firstName,
-      'lastName': lastName,
-      'phoneNumber': user['phoneNumber'] ?? '',
-      'email': user['email'] ?? '',
-      'verificationStatus': user['verificationStatus'] ?? 'verified',
-      'isPaid': user['isPaid'] ?? true,
-      'hasWon': false,
-      'status': 'active',
-      'numberOfShares': 1,
+    all.add({
+      'participantId':      user['uniqueId'] ?? user['participantId'] ?? 'p_${DateTime.now().millisecondsSinceEpoch}',
+      'userId':             uid,
+      'uniqueId':           user['uniqueId'] ?? '',
+      'fullName':           display,
+      'firstName':          first,
+      'lastName':           last,
+      'phoneNumber':        user['phoneNumber'] ?? '',
+      'email':              user['email'] ?? '',
+      'hasWon':             false,
+      'status':             'active',
+      'equbLevel':          user['equbLevel'] ?? user['level'] ?? '',
+      'numberOfShares':     1,
     });
   }
 
-  static void removeParticipant(
-      List<Map<String, dynamic>> participants, String participantId) {
-    participants.removeWhere((p) =>
-        p['participantId'] == participantId ||
-        p['id'] == participantId ||
-        p['userId'] == participantId);
+  static void removeParticipant(List<Map<String, dynamic>> all, String uid) {
+    all.removeWhere((p) =>
+        _id(p) == uid ||
+        p['participantId'] == uid);
+  }
+
+  // ── Helpers ───────────────────────────────────────────────────────────────
+
+  static String _id(Map<String, dynamic> p) =>
+      (p['userId'] ?? p['id'] ?? p['participantId'] ?? '').toString();
+
+  static String _name(Map<String, dynamic> p) =>
+      (p['fullName'] ?? p['firstName'] ?? 'Winner').toString().trim();
+
+  static String _pad(int? n) => (n ?? 0).toString().padLeft(2, '0');
+
+  // Prize pool per level (90–95% of collected contributions)
+  static double _prize(String level, int count) {
+    switch (level.toLowerCase().replaceAll('equb_', '')) {
+      case 'high':   return count * 50000.0 * 0.90;
+      case 'medium': return count * 10000.0 * 0.93;
+      default:       return count *  1000.0 * 0.95;
+    }
+  }
+
+  // Ethiopian calendar conversion
+  static Map<String, int> _ethDate(DateTime d) {
+    final jd  = _gjd(d.year, d.month, d.day);
+    const ep  = 1723856;
+    final r   = (jd - ep) % 1461;
+    final n   = r % 365 + 365 * (r ~/ 1461);
+    return {
+      'year':  4 * ((jd - ep) ~/ 1461) + (r ~/ 365) + 1,
+      'month': (n ~/ 30) + 1,
+      'day':   (n % 30) + 1,
+    };
+  }
+
+  static int _gjd(int y, int m, int d) {
+    final a = (14 - m) ~/ 12;
+    final yr = y + 4800 - a;
+    final mo = m + 12 * a - 3;
+    return d + ((153 * mo + 2) ~/ 5) + 365 * yr +
+           (yr ~/ 4) - (yr ~/ 100) + (yr ~/ 400) - 32045;
   }
 }

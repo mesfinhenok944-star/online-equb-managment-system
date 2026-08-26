@@ -104,27 +104,26 @@ class SoundService {
   }
 
   // ── SPINNING announcement (once, fire-and-forget) ─────────────────────────
-  // Plays immediately when the wheel starts rotating.
-  // Includes the level name so the audience knows which level is drawing.
+  // Exact Amharic: "አሸናፊዉን ለመምረጥ እቁቡ እየዞረ ነው አሁን በመዞር ላይ ነው"
   static Future<void> speakSpinningAnnouncement({String levelName = ''}) async {
     final am = _amLevel(levelName);
     final en = _enLevel(levelName);
 
-    // Amharic phrases , gap , English phrases
     final script = [
-      // ── Amharic ──────────────────────────────────────────────────
-      '$am . እጣ ሽክርክሩ ጀምሯል',
-      'እቁቡ እየዞረ ነው . . . አሸናፊ እየተፈለገ ነው',
+      // ── Amharic (exact requested text) ────────────────────────────
+      'አሸናፊዉን ለመምረጥ እቁቡ እየዞረ ነው',
+      'አሁን በመዞር ላይ ነው',
+      '$am እጣ ሽክርክሩ ጀምሯል',
       'ሁሉም ዝግጁ ይሁኑ',
-      // ── gap ───────────────────────────────────────────────────────
+      // ── gap ────────────────────────────────────────────────────────
       '. . .',
-      // ── English ──────────────────────────────────────────────────
-      '$en equb draw wheel is now spinning',
-      'The equb is rotating . . . choosing the winner now',
+      // ── English ────────────────────────────────────────────────────
+      'The equb is spinning now to select the winner',
+      '$en equb draw is in progress',
       'Get ready everyone',
     ].join(' , ');
 
-    await _speak(script, rate: 0.42);
+    await _speak(script, rate: 0.40);
   }
 
   // ── WINNER announcement (loops until stop()) ───────────────────────────────
@@ -140,19 +139,20 @@ class SoundService {
     final am   = _amLevel(levelName);
     final en   = _enLevel(levelName);
 
-    // ── Amharic announcement block ─────────────────────────────────
+    // ── Amharic announcement block (exact text requested) ─────────────────
     final amBlock = [
       '$am እጣ አሸናፊ ተመርጧል',
+      'አሸናፊው $name',          // "አሸናፊው [fullName]"
+      'መታወቂያ ቁጥር $id',        // "[id]"
       'አሸናፊው $name ነው',
-      'የተሳታፊ መታወቂያ ቁጥር $id',
       'እንኳን ደስ አለዎ $name',
     ].join(' , ');
 
-    // ── English announcement block ─────────────────────────────────
+    // ── English announcement block ─────────────────────────────────────────
     final enBlock = [
       'Congratulations . $en equb winner has been selected',
       'The winner is $name',
-      'Participant ID $id',
+      'ID $id',
       'Well done $name',
     ].join(' , ');
 
