@@ -587,69 +587,70 @@ class RoleManagementService {
     final Set<String> seenIds = {};
     bool loaded = false;
 
-    // ── 1. Firestore SDK — PRIMARY on real Android/iOS (direct cloud access)
+    // 1. REST API first — Admin SDK on server bypasses Firestore rules
     try {
-      final db = _maybeDb;
-      if (db != null) {
-        // Query both field names to catch all registered users
-        for (final field in ['equbLevel', 'level']) {
-          final snap = await db
-              .collection('users')
-              .where(field, isEqualTo: lvlLower)
-              .get();
-          for (final d in snap.docs) {
-            if (seenIds.contains(d.id)) continue;
-            final data = d.data();
-            if ((data['status'] ?? 'active').toString() == 'deleted') continue;
-            results.add(<String, dynamic>{...data, 'userId': d.id, 'id': d.id});
-            seenIds.add(d.id);
-            if (data['email'] != null) seenIds.add(data['email'].toString().toLowerCase());
-            if (data['uniqueId'] != null) seenIds.add(data['uniqueId'].toString());
-          }
-        }
-        loaded = results.isNotEmpty;
+      final list = await ApiService.adminGetUsers(level: lvlLower)
+          .timeout(const Duration(seconds: 8));
+      for (final item in list) {
+        final m = Map<String, dynamic>.from(item as Map);
+        final id = (m['userId'] ?? m['id'] ?? '').toString();
+        if ((m['status'] ?? 'active').toString() == 'deleted' ||
+            id.isEmpty || seenIds.contains(id)) continue;
+        results.add(m);
+        seenIds.add(id);
+        if (m['email'] != null) seenIds.add(m['email'].toString().toLowerCase());
+        if (m['uniqueId'] != null) seenIds.add(m['uniqueId'].toString());
       }
+      loaded = results.isNotEmpty;
+      debugPrint('[getUsersByLevel] REST→${results.length} for $lvlLower');
     } catch (e) {
-      debugPrint('[getUsersByLevel Firestore] $e');
+      debugPrint('[getUsersByLevel] REST error: $e');
     }
 
-    // ── 2. REST API backend (when Firestore SDK unavailable — e.g. Linux)
+    // 2. Firestore SDK (open rules or emulator)
     if (!loaded) {
       try {
-        final list = await ApiService.adminGetUsers(level: lvlLower)
-            .timeout(const Duration(seconds: 6));
-        for (final item in list) {
-          final m = Map<String, dynamic>.from(item as Map);
-          final id = (m['userId'] ?? m['id'] ?? '').toString();
-          final status = (m['status'] ?? 'active').toString();
-          if (status == 'deleted' || id.isEmpty || seenIds.contains(id)) continue;
-          results.add(m);
-          seenIds.add(id);
-          if (m['email'] != null) seenIds.add(m['email'].toString().toLowerCase());
-          if (m['uniqueId'] != null) seenIds.add(m['uniqueId'].toString());
+        final db = _maybeDb;
+        if (db != null) {
+          for (final field in ['equbLevel', 'level']) {
+            final snap = await db.collection('users')
+                .where(field, isEqualTo: lvlLower)
+                .get()
+                .timeout(const Duration(seconds: 8));
+            for (final d in snap.docs) {
+              if (seenIds.contains(d.id)) continue;
+              final data = d.data();
+              if ((data['status'] ?? 'active').toString() == 'deleted') continue;
+              results.add({...data, 'userId': d.id, 'id': d.id});
+              seenIds.add(d.id);
+              if (data['email'] != null) seenIds.add(data['email'].toString().toLowerCase());
+              if (data['uniqueId'] != null) seenIds.add(data['uniqueId'].toString());
+            }
+          }
+          loaded = results.isNotEmpty;
+          debugPrint('[getUsersByLevel] Firestore→${results.length} for $lvlLower');
         }
-        loaded = results.isNotEmpty;
-      } catch (_) {}
+      } catch (e) {
+        debugPrint('[getUsersByLevel] Firestore error: $e');
+      }
     }
 
-    // 3. Local cache (full offline mode)
-    if (!loaded || results.isEmpty) {
+    // 3. Offline cache
+    if (!loaded) {
       try {
         final cached = await OfflineService.getCachedUsers(lvlLower);
         for (final u in cached) {
           final id = (u['userId'] ?? u['id'] ?? '').toString();
-          final status = (u['status'] ?? 'active').toString();
-          if (status == 'deleted' || id.isEmpty || seenIds.contains(id)) continue;
+          if ((u['status'] ?? 'active').toString() == 'deleted' ||
+              id.isEmpty || seenIds.contains(id)) continue;
           results.add(u);
           seenIds.add(id);
         }
+        debugPrint('[getUsersByLevel] cache→${results.length} for $lvlLower');
       } catch (_) {}
     }
 
-    // Always refresh local cache so offline mode shows latest data
-    if (loaded && results.isNotEmpty) {
-      await OfflineService.cacheUsers(lvlLower, results);
-    }
+    if (results.isNotEmpty) await OfflineService.cacheUsers(lvlLower, results);
     return results;
   }
 
@@ -1164,53 +1165,39 @@ class RoleManagementService {
     final List<Map<String, dynamic>> rawList = [];
     final Set<String> seenKeys = {};
 
-    // 1. Firestore SDK — PRIMARY (direct, fast on real phone)
+    // 1. REST API first — Admin SDK bypasses Firestore rules
     try {
-      final db = _maybeDb;
-      if (db != null) {
-        // Try equbLevel field first
-        final snap1 = await db.collection('draws')
-            .where('equbLevel', isEqualTo: targetLevel).get();
-        for (final doc in snap1.docs) {
-          rawList.add({...doc.data(), 'drawId': doc.id});
-        }
-        // Also try legacy level field
-        if (rawList.isEmpty) {
-          final snap2 = await db.collection('draws')
-              .where('level', isEqualTo: targetLevel).get();
-          for (final doc in snap2.docs) {
-            rawList.add({...doc.data(), 'drawId': doc.id});
-          }
-        }
+      final list = await ApiService.adminGetDrawHistory(targetLevel)
+          .timeout(const Duration(seconds: 8));
+      for (final item in list) {
+        final m = Map<String, dynamic>.from(item as Map);
+        rawList.add(m);
       }
-    } catch (_) {
-      // Full collection scan fallback
+      debugPrint('[getDrawHistory] REST→${rawList.length} for $targetLevel');
+    } catch (e) {
+      debugPrint('[getDrawHistory] REST error: $e');
+    }
+
+    // 2. Firestore SDK (open rules or emulator)
+    if (rawList.isEmpty) {
       try {
         final db = _maybeDb;
         if (db != null) {
-          final snap = await db.collection('draws').get();
-          for (final doc in snap.docs) {
-            final data = doc.data();
-            final docLevel = (data['equbLevel'] ?? data['level'] ?? '')
-                .toString().toLowerCase().replaceAll('equb_', '').trim();
-            if (docLevel == targetLevel) rawList.add({...data, 'drawId': doc.id});
+          for (final field in ['equbLevel', 'level']) {
+            final snap = await db.collection('draws')
+                .where(field, isEqualTo: targetLevel)
+                .get()
+                .timeout(const Duration(seconds: 8));
+            for (final doc in snap.docs) {
+              rawList.add({...doc.data(), 'drawId': doc.id});
+            }
+            if (rawList.isNotEmpty) break;
           }
+          debugPrint('[getDrawHistory] Firestore→${rawList.length} for $targetLevel');
         }
-      } catch (_) {}
-    }
-
-    // 2. REST API (when Firestore SDK unavailable — Linux desktop)
-    if (rawList.isEmpty) {
-      try {
-        final list = await ApiService.adminGetDrawHistory(targetLevel)
-            .timeout(const Duration(seconds: 6));
-        for (final item in list) {
-          final m = Map<String, dynamic>.from(item as Map);
-          final docLevel = (m['equbLevel'] ?? m['level'] ?? targetLevel)
-              .toString().toLowerCase().replaceAll('equb_', '').trim();
-          if (docLevel == targetLevel) rawList.add(m);
-        }
-      } catch (_) {}
+      } catch (e) {
+        debugPrint('[getDrawHistory] Firestore error: $e');
+      }
     }
 
     // 3. Reconstruct from users with hasWon=true
@@ -1219,7 +1206,9 @@ class RoleManagementService {
         final users = await getUsersByLevel(targetLevel);
         int ctr = 1;
         for (final u in users) {
-          if (u['hasWon'] == true || u['status'] == 'winner' || u['status'] == 'selected') {
+          if (u['hasWon'] == true ||
+              u['status'] == 'winner' ||
+              u['status'] == 'selected') {
             rawList.add({
               'drawId': 'user_win_${u['userId'] ?? u['id']}',
               'equbLevel': targetLevel,
@@ -1235,19 +1224,19 @@ class RoleManagementService {
       } catch (_) {}
     }
 
-    // Deduplicate & sort
-    final List<Map<String, dynamic>> cleanList = [];
+    // Deduplicate & sort newest first
+    final List<Map<String, dynamic>> clean = [];
     for (final item in rawList) {
       final key =
-          '${(item['winnerUniqueId'] ?? item['winnerId'] ?? '')}_${item['drawNumber'] ?? 1}';
+          '${item['winnerUniqueId'] ?? item['winnerId'] ?? ''}_${item['drawNumber'] ?? 0}';
       if (!seenKeys.contains(key)) {
         seenKeys.add(key);
-        cleanList.add(item);
+        clean.add(item);
       }
     }
-    cleanList.sort((a, b) => (b['createdAt']?.toString() ?? '')
-        .compareTo(a['createdAt']?.toString() ?? ''));
-    return cleanList;
+    clean.sort((a, b) =>
+        (b['createdAt']?.toString() ?? '').compareTo(a['createdAt']?.toString() ?? ''));
+    return clean;
   }
 
   static Future<List<Map<String, dynamic>>> getAllDrawHistory() async {
@@ -1396,48 +1385,52 @@ class RoleManagementService {
       String level) async {
     final targetLevel = level.toLowerCase().replaceAll('equb_', '').trim();
 
-    // 1. Firestore SDK — PRIMARY (direct cloud)
+    // 1. REST API first — Admin SDK bypasses Firestore rules
+    try {
+      final apiRes = await ApiService.getPaymentsByLevel(targetLevel)
+          .timeout(const Duration(seconds: 8));
+      if (apiRes.isNotEmpty) {
+        final list = apiRes
+            .map((item) => Map<String, dynamic>.from(item as Map))
+            .toList();
+        list.sort((a, b) =>
+            (b['createdAt']?.toString() ?? '').compareTo(a['createdAt']?.toString() ?? ''));
+        await OfflineService.cachePayments(targetLevel, list);
+        debugPrint('[getPaymentsByLevel] REST→${list.length} for $targetLevel');
+        return list;
+      }
+    } catch (e) {
+      debugPrint('[getPaymentsByLevel] REST error: $e');
+    }
+
+    // 2. Firestore SDK (open rules or emulator)
     try {
       final db = _maybeDb;
       if (db != null) {
         final List<Map<String, dynamic>> list = [];
         final Set<String> seen = {};
-        if (targetLevel == 'all') {
-          final snap = await db.collection('payments').get();
+        for (final field in ['equbLevel', 'level']) {
+          final snap = await db.collection('payments')
+              .where(field, isEqualTo: targetLevel)
+              .get()
+              .timeout(const Duration(seconds: 8));
           for (final d in snap.docs) {
-            list.add(<String, dynamic>{'paymentId': d.id, 'id': d.id, ...d.data()});
-          }
-        } else {
-          for (final field in ['equbLevel', 'level']) {
-            final snap = await db.collection('payments')
-                .where(field, isEqualTo: targetLevel).get();
-            for (final d in snap.docs) {
-              if (!seen.contains(d.id)) {
-                seen.add(d.id);
-                list.add(<String, dynamic>{'paymentId': d.id, 'id': d.id, ...d.data()});
-              }
-            }
+            if (seen.contains(d.id)) continue;
+            seen.add(d.id);
+            list.add({'paymentId': d.id, 'id': d.id, ...d.data()});
           }
         }
-        list.sort((a, b) => (b['createdAt']?.toString() ?? '')
-            .compareTo(a['createdAt']?.toString() ?? ''));
+        list.sort((a, b) =>
+            (b['createdAt']?.toString() ?? '').compareTo(a['createdAt']?.toString() ?? ''));
         await OfflineService.cachePayments(targetLevel, list);
+        debugPrint('[getPaymentsByLevel] Firestore→${list.length} for $targetLevel');
         return list;
       }
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('[getPaymentsByLevel] Firestore error: $e');
+    }
 
-    // 2. REST API (fallback)
-    try {
-      final apiRes = await ApiService.getPaymentsByLevel(targetLevel)
-          .timeout(const Duration(seconds: 6));
-      if (apiRes.isNotEmpty) {
-        final list = apiRes.map((item) => Map<String, dynamic>.from(item as Map)).toList();
-        await OfflineService.cachePayments(targetLevel, list);
-        return list;
-      }
-    } catch (_) {}
-
-    // 3. Cache
+    // 3. Offline cache
     return await OfflineService.getCachedPayments(targetLevel);
   }
 

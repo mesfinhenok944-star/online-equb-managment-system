@@ -207,12 +207,12 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
 
   @override
   Widget build(BuildContext context) {
-    // Loading state
+    // Loading state — clean spinner, no internal tech text shown to admin
     if (_loading) {
       return Scaffold(
         backgroundColor: AppColors.background,
         appBar: AppBar(
-          title: Text(t('Loading Dashboard…', 'ዳሽቦርድ በመጫን ላይ…')),
+          title: Text(t('Admin Dashboard', 'አስተዳዳሪ ዳሽቦርድ')),
           backgroundColor: AppColors.primary,
           foregroundColor: Colors.white,
           actions: [
@@ -229,13 +229,12 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
         body: Center(
           child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
             CircularProgressIndicator(color: AppColors.primary),
-            const SizedBox(height: 16),
-            Text(t('Loading your admin dashboard…', 'ዳሽቦርድ በመጫን ላይ…'),
-                style: const TextStyle(color: AppColors.textSecondary)),
-            const SizedBox(height: 8),
-            Text(t('Connecting to Firestore…', 'ከ Firestore ጋር በማገናኘት ላይ…'),
+            const SizedBox(height: 20),
+            Text(t('Please wait…', 'እባክዎ ይጠብቁ…'),
                 style: const TextStyle(
-                    color: AppColors.textSecondary, fontSize: 12)),
+                    color: AppColors.textSecondary,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500)),
           ]),
         ),
       );

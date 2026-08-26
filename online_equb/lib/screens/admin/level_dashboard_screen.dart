@@ -561,19 +561,22 @@ class _LevelDashboardScreenState extends State<LevelDashboardScreen> {
                         overflow: TextOverflow.ellipsis,
                       ),
                     ),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(10),
-                        border: Border.all(color: accentColor.withOpacity(0.4)),
-                      ),
-                      child: Text(
-                        priceRange,
-                        style: TextStyle(
-                          color: accentColor,
-                          fontSize: 10,
-                          fontWeight: FontWeight.bold,
+                    Flexible(
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(color: accentColor.withOpacity(0.4)),
+                        ),
+                        child: Text(
+                          priceRange,
+                          style: TextStyle(
+                            color: accentColor,
+                            fontSize: 10,
+                            fontWeight: FontWeight.bold,
+                          ),
+                          overflow: TextOverflow.ellipsis,
                         ),
                       ),
                     ),
@@ -787,26 +790,37 @@ class _LevelDashboardScreenState extends State<LevelDashboardScreen> {
                 cells: [
                   DataCell(Text('${index + 1}')),
                   DataCell(
-                    Row(
-                      children: [
-                        CircleAvatar(
-                          radius: 14,
-                          backgroundColor: statusColor,
-                          child: Text(
-                            name.isNotEmpty ? name[0].toUpperCase() : 'U',
-                            style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
+                    SizedBox(
+                      width: 140,
+                      child: Row(
+                        children: [
+                          CircleAvatar(
+                            radius: 14,
+                            backgroundColor: statusColor,
+                            child: Text(
+                              name.isNotEmpty ? name[0].toUpperCase() : 'U',
+                              style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
+                            ),
                           ),
-                        ),
-                        const SizedBox(width: 8),
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Text(name, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-                            Text(user['email'] ?? '', style: const TextStyle(color: Colors.grey, fontSize: 11)),
-                          ],
-                        ),
-                      ],
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Text(name,
+                                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                                    overflow: TextOverflow.ellipsis,
+                                    maxLines: 1),
+                                Text(user['email'] ?? '',
+                                    style: const TextStyle(color: Colors.grey, fontSize: 11),
+                                    overflow: TextOverflow.ellipsis,
+                                    maxLines: 1),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                   DataCell(Text(user['uniqueId']?.toString() ?? 'N/A', style: const TextStyle(fontWeight: FontWeight.w600))),
@@ -2411,11 +2425,17 @@ class _LevelDashboardScreenState extends State<LevelDashboardScreen> {
               if (base64Str.isNotEmpty && base64Str.contains('base64,')) ...[
                 ClipRRect(
                   borderRadius: BorderRadius.circular(12),
-                  child: Image.memory(
-                    base64Decode(base64Str.split('base64,').last),
-                    fit: BoxFit.contain,
-                    errorBuilder: (_, __, ___) => const Center(
-                      child: Text('Error loading screenshot image'),
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(
+                      maxHeight: MediaQuery.of(ctx).size.height * 0.45,
+                    ),
+                    child: Image.memory(
+                      base64Decode(base64Str.split('base64,').last),
+                      fit: BoxFit.contain,
+                      width: double.infinity,
+                      errorBuilder: (_, __, ___) => const Center(
+                        child: Text('Error loading screenshot image'),
+                      ),
                     ),
                   ),
                 ),

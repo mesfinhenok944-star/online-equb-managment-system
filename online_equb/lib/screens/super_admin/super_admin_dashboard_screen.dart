@@ -534,16 +534,26 @@ class _SuperAdminDashboardScreenState
               return DataRow(
                 cells: [
                   DataCell(
-                    Row(
-                      children: [
-                        CircleAvatar(
-                          radius: 14,
-                          backgroundColor: levelColor.withOpacity(0.2),
-                          child: Icon(Icons.person, size: 16, color: levelColor),
-                        ),
-                        const SizedBox(width: 8),
-                        Text(name.isEmpty ? username : name, style: const TextStyle(fontWeight: FontWeight.w600)),
-                      ],
+                    SizedBox(
+                      width: 130,
+                      child: Row(
+                        children: [
+                          CircleAvatar(
+                            radius: 14,
+                            backgroundColor: levelColor.withOpacity(0.2),
+                            child: Icon(Icons.person, size: 16, color: levelColor),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              name.isEmpty ? username : name,
+                              style: const TextStyle(fontWeight: FontWeight.w600),
+                              overflow: TextOverflow.ellipsis,
+                              maxLines: 1,
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                   DataCell(Text('$username\n$email', style: const TextStyle(fontSize: 12))),
