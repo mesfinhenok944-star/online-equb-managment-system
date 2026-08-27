@@ -649,6 +649,19 @@ class ApiService {
     }
   }
 
+  /// Delete a payment record (clears screenshot to free storage)
+  static Future<Map<String, dynamic>> deletePaymentRecord(String paymentId) async {
+    try {
+      final res = await _client.delete(
+        Uri.parse('$_base/payments/$paymentId'),
+        headers: await _headers(),
+      );
+      return _decode(res);
+    } catch (e) {
+      return {'error': '$e'};
+    }
+  }
+
   static Future<Map<String, dynamic>> initiatePayment(
       Map<String, dynamic> data) async {
     return submitEqubPayment(data);

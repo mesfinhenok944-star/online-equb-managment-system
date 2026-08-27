@@ -2210,311 +2210,500 @@ class _LevelDashboardScreenState extends State<LevelDashboardScreen> {
   }
 
   Widget _buildPaymentsTab() {
+    final isPending  = (Map<String,dynamic> p) {
+      final s = (p['status'] ?? '').toString();
+      return s == 'pending_verification' || s == 'pending';
+    };
     final filtered = _levelPayments.where((p) {
       if (_paymentFilterStatus == 'all') return true;
-      final st = (p['status'] ?? 'pending_verification').toString();
-      if (_paymentFilterStatus == 'pending_verification') {
-        return st == 'pending_verification' || st == 'pending';
-      }
+      final st = (p['status'] ?? '').toString();
+      if (_paymentFilterStatus == 'pending_verification') return isPending(p);
       return st == _paymentFilterStatus;
     }).toList();
 
-    return Column(
-      children: [
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-          color: Colors.white,
-          child: SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: Row(
-              children: [
-                _paymentFilterChip('pending_verification', t('Pending', 'በመጠበቅ ላይ'), Colors.orange.shade800),
-                const SizedBox(width: 8),
-                _paymentFilterChip('verified', t('Verified', 'ተረጋግጧል'), Colors.green),
-                const SizedBox(width: 8),
-                _paymentFilterChip('rejected', t('Rejected', 'ተሰርዟል'), Colors.red),
-                const SizedBox(width: 8),
-                _paymentFilterChip('all', t('All Payments', 'ሁሉም'), _levelColor),
-              ],
-            ),
-          ),
+    return Column(children: [
+      // Filter chips
+      Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        color: Colors.white,
+        child: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(children: [
+            _paymentFilterChip('pending_verification',
+                t('Pending', 'በመጠበቅ') + (_pendingPaymentsCount > 0 ? ' (${_pendingPaymentsCount})' : ''),
+                Colors.orange.shade800),
+            const SizedBox(width: 8),
+            _paymentFilterChip('verified',  t('Approved', 'ፀድቋል'),  Colors.green),
+            const SizedBox(width: 8),
+            _paymentFilterChip('rejected',  t('Rejected', 'ተሰርዟል'), Colors.red),
+            const SizedBox(width: 8),
+            _paymentFilterChip('all',       t('All', 'ሁሉም'),        _levelColor),
+          ]),
         ),
-        Expanded(
-          child: filtered.isEmpty
-              ? Center(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(Icons.payments_outlined, size: 54, color: Colors.grey.shade400),
-                      const SizedBox(height: 12),
-                      Text(
-                        t('No payment records found', 'ምንም የማረጋገጫ ክፍያ ጥያቄ የለም'),
-                        style: const TextStyle(fontSize: 14, color: AppColors.textSecondary, fontWeight: FontWeight.bold),
-                      ),
-                    ],
-                  ),
-                )
-              : RefreshIndicator(
-                  onRefresh: _loadData,
-                  child: ListView.builder(
-                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 100),
-                    itemCount: filtered.length,
-                    itemBuilder: (context, index) {
-                      final item = filtered[index];
-                      final pId = (item['paymentId'] ?? item['id'] ?? '').toString();
-                      final fullName = (item['fullName'] ?? item['name'] ?? 'Equb Member').toString();
-                      final email = (item['email'] ?? '').toString();
-                      final nationalId = (item['nationalId'] ?? item['uniqueId'] ?? '—').toString();
-                      final bankName = (item['bankName'] ?? item['paymentMethod'] ?? 'CBE').toString();
-                      final refNum = (item['referenceNumber'] ?? item['reference'] ?? '—').toString();
-                      final amount = (item['amount'] ?? 0).toString();
-                      final status = (item['status'] ?? 'pending_verification').toString();
+      ),
+      // List
+      Expanded(
+        child: filtered.isEmpty
+            ? Center(child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+                Icon(Icons.payments_outlined, size: 54, color: Colors.grey.shade300),
+                const SizedBox(height: 12),
+                Text(t('No payment records', 'ምንም ክፍያ አልተገኘም'),
+                    style: const TextStyle(fontSize: 14,
+                        color: AppColors.textSecondary, fontWeight: FontWeight.bold)),
+              ]))
+            : RefreshIndicator(
+                onRefresh: _loadData,
+                child: ListView.builder(
+                  padding: const EdgeInsets.fromLTRB(14, 10, 14, 100),
+                  itemCount: filtered.length,
+                  itemBuilder: (_, index) {
+                    final item   = filtered[index];
+                    final pId    = (item['paymentId'] ?? item['id'] ?? '').toString();
+                    final name   = (item['fullName']  ?? item['name'] ?? 'Member').toString();
+                    final email  = (item['email']     ?? '').toString();
+                    final memId  = (item['nationalId'] ?? item['uniqueId'] ?? '—').toString();
+                    final bank   = (item['bankName']  ?? 'Bank').toString();
+                    final ref    = (item['referenceNumber'] ?? '—').toString();
+                    final amount = (item['amount']    ?? 0).toString();
+                    final status = (item['status']    ?? 'pending_verification').toString();
+                    final pending  = isPending(item);
+                    final verified = status == 'verified';
+                    final rejected = status == 'rejected';
+                    final rejReason = (item['rejectionReason'] ?? '').toString();
+                    final createdAt = (item['createdAt'] ?? '').toString();
+                    final dateStr   = createdAt.length >= 10 ? createdAt.substring(0, 10) : createdAt;
 
-                      Color statusColor = status == 'verified'
-                          ? Colors.green
-                          : (status == 'rejected' ? Colors.red : Colors.orange.shade800);
+                    Color statusColor = pending  ? Colors.orange.shade800
+                                      : verified ? Colors.green
+                                      : rejected ? Colors.red : Colors.grey;
+                    String statusLabel = pending  ? t('PENDING',  'በመጠበቅ')
+                                       : verified ? t('APPROVED', 'ፀድቋል')
+                                       : rejected ? t('REJECTED', 'ተሰርዟል')
+                                       : t('DELETED', 'ተሰርዟል');
 
-                      return Container(
-                        margin: const EdgeInsets.only(bottom: 14),
-                        padding: const EdgeInsets.all(16),
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(18),
-                          border: Border.all(color: _levelColor.withOpacity(0.3), width: 1.2),
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.black.withOpacity(0.03),
-                              blurRadius: 8,
-                              offset: const Offset(0, 3),
+                    return Card(
+                      margin: const EdgeInsets.only(bottom: 12),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                      elevation: 2,
+                      child: Column(children: [
+                        // Status bar
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                          decoration: BoxDecoration(
+                            color: statusColor.withOpacity(0.08),
+                            borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
+                          ),
+                          child: Row(children: [
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                              decoration: BoxDecoration(
+                                  color: statusColor, borderRadius: BorderRadius.circular(10)),
+                              child: Text(statusLabel, style: const TextStyle(
+                                  color: Colors.white, fontSize: 10,
+                                  fontWeight: FontWeight.bold)),
                             ),
-                          ],
+                            const Spacer(),
+                            if (dateStr.isNotEmpty)
+                              Text(dateStr, style: const TextStyle(
+                                  fontSize: 10, color: AppColors.textSecondary)),
+                            const SizedBox(width: 8),
+                            Text('$amount ETB', style: TextStyle(
+                                fontSize: 15, fontWeight: FontWeight.bold,
+                                color: _levelColor)),
+                          ]),
                         ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              children: [
-                                Container(
-                                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                                  decoration: BoxDecoration(
-                                    color: statusColor,
-                                    borderRadius: BorderRadius.circular(12),
-                                  ),
-                                  child: Text(
-                                    status.toUpperCase().replaceAll('_', ' '),
-                                    style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
-                                  ),
-                                ),
-                                const Spacer(),
-                                Text(
-                                  '$amount ETB',
-                                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: _levelColor),
-                                ),
-                              ],
+                        // Body
+                        Padding(
+                          padding: const EdgeInsets.all(12),
+                          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                            // Name + member ID
+                            Row(children: [
+                              CircleAvatar(
+                                radius: 18,
+                                backgroundColor: _levelColor.withOpacity(0.15),
+                                child: Text(name.isNotEmpty ? name[0].toUpperCase() : 'M',
+                                    style: TextStyle(color: _levelColor,
+                                        fontWeight: FontWeight.bold)),
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start, children: [
+                                Text(name, style: const TextStyle(
+                                    fontWeight: FontWeight.bold, fontSize: 14),
+                                    overflow: TextOverflow.ellipsis),
+                                Text(email, style: const TextStyle(
+                                    fontSize: 10, color: AppColors.textSecondary),
+                                    overflow: TextOverflow.ellipsis),
+                              ])),
+                            ]),
+                            const SizedBox(height: 6),
+                            // Member ID
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                              decoration: BoxDecoration(
+                                color: _levelColor.withOpacity(0.05),
+                                borderRadius: BorderRadius.circular(6),
+                                border: Border.all(color: _levelColor.withOpacity(0.2)),
+                              ),
+                              child: Row(children: [
+                                Icon(Icons.badge_rounded, size: 13, color: _levelColor),
+                                const SizedBox(width: 4),
+                                Text(t('ID: ', 'መታወቂያ: '),
+                                    style: const TextStyle(fontSize: 10,
+                                        color: AppColors.textSecondary)),
+                                Expanded(child: Text(memId, style: TextStyle(
+                                    fontSize: 12, fontWeight: FontWeight.bold,
+                                    color: _levelColor),
+                                    overflow: TextOverflow.ellipsis)),
+                              ]),
                             ),
+                            const SizedBox(height: 6),
+                            // Bank + ref
+                            Row(children: [
+                              Icon(Icons.account_balance, size: 13,
+                                  color: Colors.grey.shade500),
+                              const SizedBox(width: 4),
+                              Expanded(child: Text(bank, style: const TextStyle(
+                                  fontSize: 11, fontWeight: FontWeight.w600))),
+                              Icon(Icons.receipt_long, size: 13,
+                                  color: Colors.grey.shade500),
+                              const SizedBox(width: 4),
+                              Text(ref, style: TextStyle(fontSize: 11,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.blue.shade700)),
+                            ]),
+                            // Rejection reason
+                            if (rejected && rejReason.isNotEmpty) ...[
+                              const SizedBox(height: 6),
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                decoration: BoxDecoration(
+                                  color: Colors.red.withOpacity(0.05),
+                                  borderRadius: BorderRadius.circular(6),
+                                  border: Border.all(color: Colors.red.withOpacity(0.2)),
+                                ),
+                                child: Row(crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                  const Icon(Icons.info_outline, color: Colors.red, size: 12),
+                                  const SizedBox(width: 4),
+                                  Expanded(child: Text(rejReason, style: const TextStyle(
+                                      fontSize: 10, color: Colors.red))),
+                                ]),
+                              ),
+                            ],
                             const SizedBox(height: 10),
-                            Text(
-                              fullName,
-                              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
-                            ),
-                            const SizedBox(height: 2),
-                            Text(
-                              'Email: $email  •  ID: #$nationalId',
-                              style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
-                            ),
-                            const Divider(height: 18),
-                            Row(
-                              children: [
-                                const Icon(Icons.account_balance, size: 16, color: AppColors.textSecondary),
+                            // Action row
+                            Row(children: [
+                              Expanded(child: OutlinedButton.icon(
+                                onPressed: () => _showProofDialog(item),
+                                icon: const Icon(Icons.remove_red_eye_rounded, size: 14),
+                                label: Text(t('View Receipt', 'ደረሰኝ'),
+                                    style: const TextStyle(fontSize: 11)),
+                                style: OutlinedButton.styleFrom(
+                                  foregroundColor: Colors.blue.shade700,
+                                  side: BorderSide(color: Colors.blue.shade300),
+                                  padding: const EdgeInsets.symmetric(vertical: 6),
+                                ),
+                              )),
+                              if (pending) ...[
                                 const SizedBox(width: 6),
-                                Text(
-                                  'Bank: $bankName',
-                                  style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+                                IconButton(
+                                  icon: const Icon(Icons.cancel_rounded,
+                                      color: Colors.red, size: 24),
+                                  tooltip: t('Reject', 'ሰርዝ'),
+                                  onPressed: () => _showRejectReasonDialog(pId, item: item),
+                                  constraints: const BoxConstraints(),
+                                  padding: const EdgeInsets.symmetric(horizontal: 4),
                                 ),
-                                const Spacer(),
-                                Text(
-                                  'Ref: $refNum',
-                                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.blue.shade800),
-                                ),
+                                Expanded(child: ElevatedButton.icon(
+                                  onPressed: () => _verifyPayment(pId, 'verified', item: item),
+                                  icon: const Icon(Icons.check_circle_rounded, size: 14),
+                                  label: Text(t('Approve', 'አረጋግጥ'),
+                                      style: const TextStyle(fontSize: 11)),
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: Colors.green,
+                                    foregroundColor: Colors.white,
+                                    padding: const EdgeInsets.symmetric(vertical: 6),
+                                  ),
+                                )),
                               ],
-                            ),
-                            const SizedBox(height: 12),
-                            Row(
-                              children: [
-                                OutlinedButton.icon(
-                                  onPressed: () => _showProofDialog(item),
-                                  icon: const Icon(Icons.remove_red_eye_rounded, size: 16),
-                                  label: Text(t('View Proof', 'ደረሰኝ ተመልከት')),
+                            ]),
+                            // Delete button
+                            if (!pending) ...[
+                              const SizedBox(height: 6),
+                              SizedBox(width: double.infinity,
+                                child: OutlinedButton.icon(
+                                  onPressed: () => _deletePayment(pId, name),
+                                  icon: const Icon(Icons.delete_forever_rounded,
+                                      size: 13, color: Colors.grey),
+                                  label: Text(
+                                    t('Delete Record (Free Storage)', 'መዝገብ ሰርዝ — ቦታ ለቅቅ'),
+                                    style: const TextStyle(fontSize: 10, color: Colors.grey),
+                                  ),
                                   style: OutlinedButton.styleFrom(
-                                    foregroundColor: Colors.blue.shade800,
-                                    side: BorderSide(color: Colors.blue.shade800),
+                                    side: BorderSide(color: Colors.grey.shade300),
+                                    padding: const EdgeInsets.symmetric(vertical: 4),
                                   ),
                                 ),
-                                const Spacer(),
-                                if (status == 'pending_verification' || status == 'pending') ...[
-                                  IconButton(
-                                    icon: const Icon(Icons.cancel_rounded, color: Colors.red, size: 28),
-                                    onPressed: () => _showRejectReasonDialog(pId),
-                                    tooltip: t('Reject Payment', 'ክፍያን ሰርዝ'),
-                                  ),
-                                  const SizedBox(width: 8),
-                                  ElevatedButton.icon(
-                                    onPressed: () => _verifyPayment(pId, 'verified'),
-                                    icon: const Icon(Icons.check_circle_rounded, size: 18),
-                                    label: Text(t('Approve', 'አረጋግጥ')),
-                                    style: ElevatedButton.styleFrom(
-                                      backgroundColor: Colors.green,
-                                      foregroundColor: Colors.white,
-                                    ),
-                                  ),
-                                ],
-                              ],
-                            ),
-                          ],
+                              ),
+                            ],
+                          ]),
                         ),
-                      );
-                    },
-                  ),
+                      ]),
+                    );
+                  },
                 ),
-        ),
-      ],
-    );
+              ),
+      ),
+    ]);
   }
 
-  Future<void> _verifyPayment(String paymentId, String status, {String reason = ''}) async {
+  Future<void> _verifyPayment(String paymentId, String status,
+      {String reason = '', Map<String, dynamic>? item}) async {
     setState(() => _loading = true);
-    final success = await RoleManagementService.verifyPayment(
-      paymentId: paymentId,
-      status: status,
-      rejectionReason: reason,
-      adminId: _resolvedAdminId.isNotEmpty ? _resolvedAdminId : 'admin_${widget.level}',
-      level: widget.level,
+    final adminId = _resolvedAdminId.isNotEmpty ? _resolvedAdminId : 'admin_${widget.level}';
+    final ok = await RoleManagementService.verifyPayment(
+      paymentId: paymentId, status: status,
+      rejectionReason: reason, adminId: adminId, level: widget.level,
     );
-
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            success
-                ? (status == 'verified' ? '✅ Payment Verified & Member Contribution Updated!' : '❌ Payment Request Rejected.')
-                : 'Failed to update payment status.',
-          ),
-          backgroundColor: status == 'verified' ? Colors.green : Colors.red,
-        ),
-      );
-      _loadData();
+    // Send in-app + email notification
+    if (ok && item != null) {
+      final userId    = (item['userId']  ?? '').toString();
+      final userEmail = (item['email']   ?? '').toString();
+      final amount    = (item['amount']  ?? '0').toString();
+      if (userId.isNotEmpty || userEmail.isNotEmpty) {
+        RoleManagementService.sendPaymentNotification(
+          userId: userId, userEmail: userEmail,
+          status: status, amount: amount,
+          level: widget.level, rejectionReason: reason,
+        );
+      }
     }
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(ok
+          ? (status == 'verified'
+              ? t('✅ Payment Approved! Member notified.', '✅ ክፍያ ፀድቋል! ለአባሉ ተነግሯቸዋል።')
+              : t('❌ Payment Rejected. Member notified.', '❌ ክፍያ ተሰርዟል። አባሉ ተነግሯቸዋል།'))
+          : t('Action failed.', 'ተግባሩ አልተሳካም።')),
+      backgroundColor: ok ? (status == 'verified' ? Colors.green : Colors.red) : Colors.orange,
+      duration: const Duration(seconds: 3),
+    ));
+    _loadData();
+  }
+  Future<void> _deletePayment(String paymentId, String name) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        title: Row(children: [
+          const Icon(Icons.delete_forever_rounded, color: Colors.red),
+          const SizedBox(width: 8),
+          Expanded(child: Text(t('Delete Record', 'መዝገብ ሰርዝ'),
+              style: const TextStyle(fontWeight: FontWeight.bold))),
+        ]),
+        content: Text(t(
+          'Delete payment record for "$name"? Screenshot cleared to free storage.',
+          'ለ"$name" ያለው የክፍያ መዝገብ ይሰረዝ? ቦታ ለማስለቀቅ ስክሪንሽቱ ይጸዳል።',
+        )),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: Text(t('Cancel', 'ሰርዝ'))),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            child: Text(t('Delete', 'ሰርዝ'), style: const TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    setState(() => _loading = true);
+    final ok = await RoleManagementService.deletePayment(paymentId);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(ok
+          ? t('Record deleted. Storage cleared.', 'መዝገብ ተሰርዟል። ቦታ ተለቅቋል።')
+          : t('Failed to delete.', 'ማስወገድ አልተሳካም።')),
+      backgroundColor: ok ? Colors.green : Colors.red,
+    ));
+    _loadData();
   }
 
   void _showProofDialog(Map<String, dynamic> item) {
     final base64Str = (item['proofScreenshotBase64'] ?? '').toString();
-
     showDialog(
       context: context,
       builder: (ctx) => Dialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+        insetPadding: const EdgeInsets.all(10),
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(16),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Row(
-                children: [
-                  const Icon(Icons.receipt_long, color: AppColors.primary),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      _isAmharic ? 'የክፍያ ደረሰኝ ማረጋገጫ' : 'Bank Receipt Proof Inspection',
-                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-                    ),
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.close),
-                    onPressed: () => Navigator.pop(ctx),
-                  ),
-                ],
-              ),
-              const Divider(),
-              if (base64Str.isNotEmpty && base64Str.contains('base64,')) ...[
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(12),
-                  child: ConstrainedBox(
-                    constraints: BoxConstraints(
-                      maxHeight: MediaQuery.of(ctx).size.height * 0.45,
-                    ),
-                    child: Image.memory(
-                      base64Decode(base64Str.split('base64,').last),
-                      fit: BoxFit.contain,
-                      width: double.infinity,
-                      errorBuilder: (_, __, ___) => const Center(
-                        child: Text('Error loading screenshot image'),
-                      ),
-                    ),
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            Row(children: [
+              Icon(Icons.receipt_long_rounded, color: _levelColor),
+              const SizedBox(width: 8),
+              Expanded(child: Text(t('Payment Receipt', 'የክፍያ ደረሰኝ'),
+                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16))),
+              IconButton(icon: const Icon(Icons.close),
+                  onPressed: () => Navigator.pop(ctx)),
+            ]),
+            const Divider(),
+            // Member summary
+            _paymentInfoCard(item),
+            const SizedBox(height: 12),
+            // Screenshot
+            if (base64Str.isNotEmpty && base64Str.contains('base64,'))
+              ClipRRect(
+                borderRadius: BorderRadius.circular(10),
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(
+                      maxHeight: MediaQuery.of(ctx).size.height * 0.48),
+                  child: Image.memory(
+                    base64Decode(base64Str.split('base64,').last),
+                    fit: BoxFit.contain, width: double.infinity,
+                    errorBuilder: (_, __, ___) => Container(
+                      height: 140, color: Colors.grey.shade100,
+                      child: const Center(child: Text('Error loading image'))),
                   ),
                 ),
-              ] else ...[
-                Container(
-                  height: 200,
-                  color: Colors.grey.shade200,
-                  child: const Center(
-                    child: Text('No screenshot preview available'),
-                  ),
-                ),
-              ],
-              const SizedBox(height: 14),
+              )
+            else
               Container(
-                padding: const EdgeInsets.all(10),
+                height: 140, width: double.infinity,
+                decoration: BoxDecoration(color: Colors.grey.shade100,
+                    borderRadius: BorderRadius.circular(10)),
+                child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+                  Icon(Icons.image_not_supported_rounded,
+                      color: Colors.grey.shade400, size: 40),
+                  const SizedBox(height: 8),
+                  Text(t('No screenshot attached', 'ምስል አልተያያዘም'),
+                      style: const TextStyle(color: AppColors.textSecondary)),
+                ]),
+              ),
+            // Proof hash
+            if ((item['proofHash'] ?? '').toString().isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                 decoration: BoxDecoration(
-                  color: Colors.green.withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: Colors.green.withOpacity(0.3)),
+                  color: Colors.green.withOpacity(0.07),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.green.withOpacity(0.2)),
                 ),
-                child: Row(
-                  children: [
-                    const Icon(Icons.verified_user_rounded, color: Colors.green, size: 20),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        'Security Checksum: ${item['proofHash'] != null ? (item['proofHash'].toString().substring(0, 16) + '...') : 'SHA-256 Validated'}',
-                        style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.green),
-                      ),
-                    ),
-                  ],
-                ),
+                child: Row(children: [
+                  const Icon(Icons.verified_user_rounded, color: Colors.green, size: 14),
+                  const SizedBox(width: 6),
+                  Expanded(child: Text(
+                    'SHA-256: ${item['proofHash'].toString().substring(0, 20)}...',
+                    style: const TextStyle(fontSize: 10, color: Colors.green,
+                        fontWeight: FontWeight.bold),
+                  )),
+                ]),
               ),
             ],
-          ),
+            // Actions for pending payments
+            if ((item['status'] ?? '').toString() == 'pending_verification' ||
+                (item['status'] ?? '').toString() == 'pending') ...[
+              const SizedBox(height: 14),
+              Row(children: [
+                Expanded(child: OutlinedButton.icon(
+                  onPressed: () {
+                    Navigator.pop(ctx);
+                    _showRejectReasonDialog(
+                        (item['paymentId'] ?? item['id'] ?? '').toString(),
+                        item: item);
+                  },
+                  icon: const Icon(Icons.cancel_rounded, color: Colors.red, size: 16),
+                  label: Text(t('Reject', 'ሰርዝ'),
+                      style: const TextStyle(color: Colors.red)),
+                  style: OutlinedButton.styleFrom(
+                      side: const BorderSide(color: Colors.red)),
+                )),
+                const SizedBox(width: 10),
+                Expanded(child: ElevatedButton.icon(
+                  onPressed: () {
+                    Navigator.pop(ctx);
+                    _verifyPayment(
+                        (item['paymentId'] ?? item['id'] ?? '').toString(),
+                        'verified', item: item);
+                  },
+                  icon: const Icon(Icons.check_circle_rounded, size: 16),
+                  label: Text(t('Approve', 'አረጋግጥ')),
+                  style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.green, foregroundColor: Colors.white),
+                )),
+              ]),
+            ],
+          ]),
         ),
       ),
     );
   }
+  Widget _paymentInfoCard(Map<String, dynamic> p) {
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: _levelColor.withOpacity(0.05),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: _levelColor.withOpacity(0.2)),
+      ),
+      child: Column(children: [
+        _pinfoRow(Icons.person,          t('Name',   'ስም'),     (p['fullName']  ?? p['name'] ?? '').toString()),
+        _pinfoRow(Icons.badge_rounded,   t('ID',     'መታወቂያ'), (p['nationalId'] ?? p['uniqueId'] ?? '—').toString()),
+        _pinfoRow(Icons.email_outlined,  t('Email',  'ኢሜይል'), (p['email'] ?? '').toString()),
+        _pinfoRow(Icons.payments,        t('Amount', 'መጠን'),   '${p['amount'] ?? 0} ETB'),
+        _pinfoRow(Icons.account_balance, t('Bank',   'ባንክ'),   (p['bankName'] ?? '').toString()),
+        _pinfoRow(Icons.receipt_long,    t('Ref #',  'ቁጥር'),  (p['referenceNumber'] ?? '—').toString()),
+      ]),
+    );
+  }
+  Widget _pinfoRow(IconData icon, String label, String value) => Padding(
+    padding: const EdgeInsets.symmetric(vertical: 3),
+    child: Row(children: [
+      Icon(icon, size: 14, color: _levelColor),
+      const SizedBox(width: 6),
+      SizedBox(width: 58, child: Text(label,
+          style: const TextStyle(fontSize: 11, color: AppColors.textSecondary))),
+      Expanded(child: Text(value,
+          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+          overflow: TextOverflow.ellipsis, maxLines: 1)),
+    ]),
+  );
 
-  void _showRejectReasonDialog(String paymentId) {
-    final reasonController = TextEditingController();
-
+  void _showRejectReasonDialog(String paymentId, {Map<String, dynamic>? item}) {
+    final ctrl = TextEditingController();
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: Text(_isAmharic ? 'ክፍያውን ለመሰረዝ ምክንያት ያስገቡ' : 'Specify Rejection Reason'),
-        content: TextField(
-          controller: reasonController,
-          decoration: InputDecoration(
-            hintText: _isAmharic ? 'ለምሳሌ: የተሳሳተ ደረሰኝ ወይም አልተከፈለም' : 'e.g. Invalid reference code or wrong receipt',
+        title: Text(t('Rejection Reason', 'የመሰረዝ ምክንያት'),
+            style: const TextStyle(fontWeight: FontWeight.bold)),
+        content: Column(mainAxisSize: MainAxisSize.min, children: [
+          Text(t('Member will receive an email notification with this reason.',
+                 'አባሉ ምክንያቱን ኢሜይል ይደርሳቸዋል።'),
+              style: const TextStyle(fontSize: 12, color: AppColors.textSecondary)),
+          const SizedBox(height: 12),
+          TextField(
+            controller: ctrl, maxLines: 3, autofocus: true,
+            decoration: InputDecoration(
+              hintText: t('e.g. Wrong bank / unclear screenshot / invalid reference',
+                          'ለምሳሌ: የተሳሳተ ባንክ / ደረሰኝ ግልጽ አይደለም'),
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+            ),
           ),
-        ),
+        ]),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: Text(_isAmharic ? 'ሰርዝ' : 'Cancel'),
-          ),
-          ElevatedButton(
+          TextButton(onPressed: () => Navigator.pop(ctx), child: Text(t('Cancel', 'ሰርዝ'))),
+          ElevatedButton.icon(
             onPressed: () {
               Navigator.pop(ctx);
-              _verifyPayment(paymentId, 'rejected', reason: reasonController.text.trim());
+              _verifyPayment(paymentId, 'rejected',
+                  reason: ctrl.text.trim(), item: item);
             },
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-            child: Text(_isAmharic ? 'አረጋግጥና ሰርዝ' : 'Reject Payment'),
+            icon: const Icon(Icons.cancel_rounded, size: 16),
+            label: Text(t('Reject & Notify', 'ሰርዝና አሳውቅ')),
+            style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.red, foregroundColor: Colors.white),
           ),
         ],
       ),

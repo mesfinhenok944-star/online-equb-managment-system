@@ -1,10 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
-import 'package:firebase_auth/firebase_auth.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../config/theme.dart';
 import '../../services/api_service.dart';
 import '../../services/role_management_service.dart';
+import '../../services/firestore_direct_service.dart';
 import '../../widgets/smart_back_button.dart';
 
 /// Used for both CREATE (editData == null) and EDIT (editData != null) modes.
@@ -153,52 +152,14 @@ class _SuperAdminAdminFormScreenState extends State<SuperAdminAdminFormScreen> {
         successMsg = res['message'] ??
             t('Admin assigned successfully.', 'አስተዳዳሪ ተመድቧል።');
 
-        // ── Create Firebase Auth account so admin can login ──────────────
-        // This runs AFTER the Firestore write so the admin doc always exists.
-        String? firebaseUid;
-        try {
-          final authInstance = FirebaseAuth.instance;
-
-          // Check if account already exists by trying to sign in first
-          UserCredential? cred;
+        // Firebase Auth disabled — patch password into Firestore doc so login works
+        if (firestoreDocId.isNotEmpty && password.isNotEmpty) {
           try {
-            cred = await authInstance.createUserWithEmailAndPassword(
-              email: email,
-              password: password,
-            );
-            firebaseUid = cred.user?.uid;
-          } on FirebaseAuthException catch (e) {
-            if (e.code == 'email-already-in-use') {
-              // Auth account exists; just fetch its UID via sign-in
-              try {
-                final existing = await authInstance.signInWithEmailAndPassword(
-                  email: email,
-                  password: password,
-                );
-                firebaseUid = existing.user?.uid;
-                // Sign out immediately — super admin is doing the creation
-                await authInstance.signOut();
-              } catch (_) {}
-            }
-          }
-
-          // Link the Firebase UID back into the Firestore admin document
-          if (firebaseUid != null && firestoreDocId.isNotEmpty) {
-            try {
-              await FirebaseFirestore.instance
-                  .collection('admins')
-                  .doc(firestoreDocId)
-                  .update({
-                'firebaseUid': firebaseUid,
-                'uid': firebaseUid,
-                'updatedAt': FieldValue.serverTimestamp(),
-              });
-            } catch (_) {}
-          }
-        } catch (authErr) {
-          // Firebase Auth creation failed — admin can still login via
-          // Firestore-only path; not fatal.
-          debugPrint('[AdminForm] Firebase Auth creation warning: $authErr');
+            await FirestoreDirectService.updateDocument('admins', firestoreDocId, {
+              'password': password,
+              'updatedAt': DateTime.now().toUtc().toIso8601String(),
+            });
+          } catch (_) {}
         }
       } else {
         errorMsg =

@@ -257,124 +257,109 @@ class RoleManagementService {
 
   static Future<Map<String, dynamic>> createAdminResult(
       Map<String, dynamic> admin) async {
-    final email = (admin['email'] ?? '').toString().trim().toLowerCase();
+    final email    = (admin['email']    ?? '').toString().trim().toLowerCase();
     final username = (admin['username'] ?? '').toString().trim().toLowerCase();
-    final level = (admin['level'] ?? admin['equbLevel'] ?? 'low')
-        .toString()
-        .toLowerCase();
-
+    final level    = (admin['level']    ?? admin['equbLevel'] ?? 'low').toString().toLowerCase();
     if (email.isEmpty && username.isEmpty) {
       return {'success': false, 'error': 'Email address or username is required.'};
     }
-
-    final firstName = (admin['firstName'] ?? '').toString().trim();
+    final firstName  = (admin['firstName']  ?? '').toString().trim();
     final middleName = (admin['middleName'] ?? '').toString().trim();
-    final lastName = (admin['lastName'] ?? '').toString().trim();
-    final fullName =
-        '$firstName $middleName $lastName'.replaceAll(RegExp(r'\s+'), ' ').trim();
-
+    final lastName   = (admin['lastName']   ?? '').toString().trim();
+    final fullName   = '$firstName $middleName $lastName'.replaceAll(RegExp(r'\s+'), ' ').trim();
+    final now = _nowIso();
     final adminData = <String, dynamic>{
-      'firstName': firstName,
-      'middleName': middleName,
-      'lastName': lastName,
-      'fullName': fullName.isEmpty ? (username.isNotEmpty ? username : email) : fullName,
-      'email': email,
-      'username': username.isEmpty
-          ? (email.contains('@') ? email.split('@').first : email)
-          : username,
-      'password': admin['password'] ?? 'admin123',
-      'phone': admin['phone'] ?? '',
-      'address': admin['address'] ?? '',
-      'level': level,
-      'equbLevel': level,
-      'role': 'admin',
-      'status': 'active',
-      'createdAt': _nowIso(),
-      'updatedAt': _nowIso(),
+      'firstName':   firstName,
+      'middleName':  middleName,
+      'lastName':    lastName,
+      'fullName':    fullName.isEmpty ? (username.isNotEmpty ? username : email) : fullName,
+      'email':       email,
+      'username':    username.isEmpty ? (email.contains('@') ? email.split('@').first : email) : username,
+      'password':    admin['password'] ?? 'admin123',
+      'phone':       admin['phone']   ?? '',
+      'address':     admin['address'] ?? '',
+      'level':       level,
+      'equbLevel':   level,
+      'role':        'admin',
+      'status':      'active',
+      'createdAt':   now,
+      'updatedAt':   now,
       'permissions': _defaultPermissions(level),
     };
 
-    // 1. REST API (primary — writes to live Firestore via backend)
+    // ── 1. FirestoreDirectService — JWT bypasses rules (PRIMARY on phone) ───
+    try {
+      // Check if admin with same email already exists
+      if (email.isNotEmpty) {
+        final existing = await FirestoreDirectService.getAdmins();
+        final dup = existing.where((a) =>
+            (a['email'] ?? '').toString().toLowerCase() == email &&
+            (a['status'] ?? 'active') != 'deleted').toList();
+        if (dup.isNotEmpty) {
+          // Update existing admin (re-assign to level)
+          final docId = (dup.first['adminId'] ?? dup.first['id'] ?? '').toString();
+          if (docId.isNotEmpty) {
+            final updatePayload = Map<String, dynamic>.from(adminData);
+            updatePayload.remove('createdAt');
+            updatePayload['updatedAt'] = now;
+            await FirestoreDirectService.updateDocument('admins', docId, updatePayload);
+            adminData['adminId'] = docId;
+            adminData['id']      = docId;
+            await OfflineService.saveAdminOffline(adminData);
+            debugPrint('[createAdmin] FirestoreDirect updated existing: $docId');
+            return {'success': true, 'id': docId, 'message': 'Admin updated and assigned.'};
+          }
+        }
+        // Create new admin doc
+        final newId = await FirestoreDirectService.addDocument('admins', adminData);
+        if (newId != null) {
+          adminData['adminId'] = newId;
+          adminData['id']      = newId;
+          await OfflineService.saveAdminOffline(adminData);
+          debugPrint('[createAdmin] FirestoreDirect created: $newId');
+          return {'success': true, 'id': newId, 'message': 'Admin assigned successfully.'};
+        }
+      }
+    } catch (e) { debugPrint('[createAdmin] FirestoreDirect error: $e'); }
+
+    // ── 2. REST API (backend running + tunnel up) ────────────────────────────
     try {
       final apiRes = await ApiService.superAdminCreateAdmin({...admin, ...adminData});
       if (!apiRes.containsKey('error')) {
         final id = (apiRes['adminId'] ?? apiRes['id'] ?? '').toString();
         if (id.isNotEmpty) {
-          adminData['adminId'] = id;
-          adminData['id'] = id;
+          adminData['adminId'] = id; adminData['id'] = id;
           await OfflineService.saveAdminOffline(adminData);
-          return {
-            'success': true,
-            'id': id,
-            'message': apiRes['message'] ?? 'Admin assigned successfully.',
-          };
+          return {'success': true, 'id': id, 'message': apiRes['message'] ?? 'Admin assigned.'};
         }
       }
       final errStr = (apiRes['error'] ?? '').toString();
-      final isNetworkErr = errStr.contains('Cannot reach') ||
-          errStr.contains('SocketException') ||
-          errStr.contains('Connection refused');
-      if (!isNetworkErr && apiRes.containsKey('error')) {
+      if (!errStr.contains('Cannot reach') && !errStr.contains('SocketException') &&
+          !errStr.contains('Connection refused') && apiRes.containsKey('error')) {
         return {'success': false, 'error': errStr};
       }
     } catch (_) {}
 
-    // 2. Firestore SDK (when backend unreachable)
+    // ── 3. Firestore SDK fallback ────────────────────────────────────────────
     try {
       final db = _maybeDb;
       if (db != null) {
-        if (email.isNotEmpty) {
-          final byEmail = await db
-              .collection('admins')
-              .where('email', isEqualTo: email)
-              .get();
-          final activeDocs = byEmail.docs
-              .where((d) => (d.data()['status'] ?? 'active') != 'deleted');
-          if (activeDocs.isNotEmpty) {
-            final docId = activeDocs.first.id;
-            adminData['adminId'] = docId;
-            adminData['id'] = docId;
-            adminData.remove('createdAt');
-            adminData['updatedAt'] = FieldValue.serverTimestamp();
-            await db
-                .collection('admins')
-                .doc(docId)
-                .set(adminData, SetOptions(merge: true));
-            await OfflineService.saveAdminOffline(adminData);
-            return {'success': true, 'id': docId, 'message': 'Admin updated.'};
-          }
-        }
-        final existing = await getAdmins(level: level);
-        final activeCount =
-            existing.where((a) => (a['status'] ?? 'active') != 'deleted').length;
-        if (activeCount >= 3) {
-          return {
-            'success': false,
-            'error': 'Maximum 3 active admins allowed for $level level.',
-          };
-        }
-        adminData['createdAt'] = FieldValue.serverTimestamp();
-        adminData['updatedAt'] = FieldValue.serverTimestamp();
-        final ref = await db.collection('admins').add(adminData);
-        adminData['adminId'] = ref.id;
-        adminData['id'] = ref.id;
+        final ref = await db.collection('admins').add({
+          ...adminData,
+          'createdAt': FieldValue.serverTimestamp(),
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+        adminData['adminId'] = ref.id; adminData['id'] = ref.id;
         await OfflineService.saveAdminOffline(_toSerializable(adminData));
         return {'success': true, 'id': ref.id, 'message': 'Admin assigned successfully.'};
       }
-    } catch (e) {
-      debugPrint('[createAdminResult SDK] $e');
-    }
+    } catch (e) { debugPrint('[createAdminResult SDK] $e'); }
 
-    // 3. Offline fallback
+    // ── 4. Offline fallback ──────────────────────────────────────────────────
     final localId = 'admin_offline_${DateTime.now().millisecondsSinceEpoch}';
-    adminData['adminId'] = localId;
-    adminData['id'] = localId;
+    adminData['adminId'] = localId; adminData['id'] = localId;
     await OfflineService.saveAdminOffline(adminData);
-    return {
-      'success': true,
-      'id': localId,
-      'message': 'Admin saved offline — will sync when connected.',
-    };
+    return {'success': true, 'id': localId, 'message': 'Admin saved offline.'};
   }
 
   static Future<String?> createAdmin(Map<String, dynamic> admin) async {
@@ -386,10 +371,11 @@ class RoleManagementService {
 
   static Future<bool> updateAdmin(
       String adminId, Map<String, dynamic> updates) async {
-    final firstName = (updates['firstName'] ?? '').toString().trim();
+    if (adminId.isEmpty) return false;
+    final firstName  = (updates['firstName']  ?? '').toString().trim();
     final middleName = (updates['middleName'] ?? '').toString().trim();
-    final lastName = (updates['lastName'] ?? '').toString().trim();
-    String fullName = (updates['fullName'] ?? '').toString().trim();
+    final lastName   = (updates['lastName']   ?? '').toString().trim();
+    String fullName  = (updates['fullName']   ?? '').toString().trim();
     if (fullName.isEmpty && (firstName.isNotEmpty || lastName.isNotEmpty)) {
       fullName = '$firstName $middleName $lastName'.replaceAll(RegExp(r'\s+'), ' ').trim();
     }
@@ -398,101 +384,58 @@ class RoleManagementService {
       if (fullName.isNotEmpty) 'fullName': fullName,
       'updatedAt': _nowIso(),
     };
-    payload.remove('adminId');
-    payload.remove('createdAt');
+    payload.remove('adminId'); payload.remove('createdAt');
 
-    // 1. REST API
-    bool done = false;
+    // 1. FirestoreDirectService (PRIMARY — bypasses rules on phone)
     try {
-      final res = await ApiService.superAdminUpdateAdmin(adminId, payload);
-      if (!res.containsKey('error')) done = true;
+      final ok = await FirestoreDirectService.updateDocument('admins', adminId, payload);
+      if (ok) { debugPrint('[updateAdmin] FirestoreDirect OK'); return true; }
+    } catch (e) { debugPrint('[updateAdmin] FirestoreDirect: $e'); }
+    // 2. REST API
+    try { final r = await ApiService.superAdminUpdateAdmin(adminId, payload); if (!r.containsKey('error')) return true; } catch (_) {}
+    // 3. Firestore SDK
+    try {
+      final db = _maybeDb;
+      if (db != null) { await db.collection('admins').doc(adminId).set({...payload, 'updatedAt': FieldValue.serverTimestamp()}, SetOptions(merge: true)); return true; }
     } catch (_) {}
-    if (!done) {
-      try {
-        final res = await ApiService.updateAdminSettings(adminId, payload);
-        if (!res.containsKey('error')) done = true;
-      } catch (_) {}
-    }
-
-    // 2. Firestore SDK
-    if (!done) {
-      try {
-        final db = _maybeDb;
-        if (db != null) {
-          final fsPayload = <String, dynamic>{
-            ...payload,
-            'updatedAt': FieldValue.serverTimestamp(),
-          };
-          if (adminId.isNotEmpty) {
-            await db
-                .collection('admins')
-                .doc(adminId)
-                .set(fsPayload, SetOptions(merge: true));
-            done = true;
-          }
-        }
-      } catch (_) {}
-    }
-
-    return done;
+    return false;
   }
 
   static Future<bool> deleteAdmin(String adminId) async {
-    bool done = false;
-    try {
-      final res = await ApiService.superAdminDeleteAdmin(adminId);
-      if (!res.containsKey('error')) done = true;
-    } catch (_) {}
-    try {
-      final db = _maybeDb;
-      if (db != null) {
-        await db.collection('admins').doc(adminId).update({
-          'status': 'deleted',
-          'deletedAt': FieldValue.serverTimestamp(),
-        });
-        done = true;
-      }
-    } catch (_) {}
-    return done;
+    if (adminId.isEmpty) return false;
+    final now = _nowIso();
+    // 1. FirestoreDirectService
+    try { final ok = await FirestoreDirectService.updateDocument('admins', adminId, {'status': 'deleted', 'deletedAt': now, 'updatedAt': now}); if (ok) { debugPrint('[deleteAdmin] FirestoreDirect OK'); return true; } } catch (e) { debugPrint('[deleteAdmin] FirestoreDirect: $e'); }
+    // 2. REST API
+    try { final r = await ApiService.superAdminDeleteAdmin(adminId); if (!r.containsKey('error')) return true; } catch (_) {}
+    // 3. Firestore SDK
+    try { final db = _maybeDb; if (db != null) { await db.collection('admins').doc(adminId).update({'status': 'deleted', 'deletedAt': FieldValue.serverTimestamp()}); return true; } } catch (_) {}
+    return false;
   }
 
   static Future<bool> suspendAdmin(String adminId, {String reason = ''}) async {
-    bool done = false;
-    try {
-      final res = await ApiService.superAdminSuspendAdmin(adminId, reason: reason);
-      if (!res.containsKey('error')) done = true;
-    } catch (_) {}
-    try {
-      final db = _maybeDb;
-      if (db != null) {
-        await db.collection('admins').doc(adminId).update({
-          'status': 'suspended',
-          'suspensionReason': reason,
-          'suspendedAt': FieldValue.serverTimestamp(),
-        });
-        done = true;
-      }
-    } catch (_) {}
-    return done;
+    if (adminId.isEmpty) return false;
+    final now = _nowIso();
+    final payload = {'status': 'suspended', 'suspensionReason': reason, 'suspendedAt': now, 'updatedAt': now};
+    // 1. FirestoreDirectService
+    try { final ok = await FirestoreDirectService.updateDocument('admins', adminId, payload); if (ok) return true; } catch (_) {}
+    // 2. REST API
+    try { final r = await ApiService.superAdminSuspendAdmin(adminId, reason: reason); if (!r.containsKey('error')) return true; } catch (_) {}
+    // 3. Firestore SDK
+    try { final db = _maybeDb; if (db != null) { await db.collection('admins').doc(adminId).update({'status': 'suspended', 'suspensionReason': reason, 'suspendedAt': FieldValue.serverTimestamp()}); return true; } } catch (_) {}
+    return false;
   }
 
   static Future<bool> activateAdmin(String adminId) async {
-    bool done = false;
-    try {
-      final res = await ApiService.superAdminActivateAdmin(adminId);
-      if (!res.containsKey('error')) done = true;
-    } catch (_) {}
-    try {
-      final db = _maybeDb;
-      if (db != null) {
-        await db.collection('admins').doc(adminId).update({
-          'status': 'active',
-          'updatedAt': FieldValue.serverTimestamp(),
-        });
-        done = true;
-      }
-    } catch (_) {}
-    return done;
+    if (adminId.isEmpty) return false;
+    final now = _nowIso();
+    // 1. FirestoreDirectService
+    try { final ok = await FirestoreDirectService.updateDocument('admins', adminId, {'status': 'active', 'updatedAt': now}); if (ok) return true; } catch (_) {}
+    // 2. REST API
+    try { final r = await ApiService.superAdminActivateAdmin(adminId); if (!r.containsKey('error')) return true; } catch (_) {}
+    // 3. Firestore SDK
+    try { final db = _maybeDb; if (db != null) { await db.collection('admins').doc(adminId).update({'status': 'active', 'updatedAt': FieldValue.serverTimestamp()}); return true; } } catch (_) {}
+    return false;
   }
 
   static Future<bool> addAdmin(Map<String, dynamic> admin) async {
@@ -1372,89 +1315,95 @@ class RoleManagementService {
     required String level,
   }) async {
     final targetLevel = level.toLowerCase().replaceAll('equb_', '').trim();
+    final now = _nowIso();
     bool deleted = false;
 
-    // 1. REST API
+    // 1. FirestoreDirectService — JWT bypasses rules (PRIMARY on phone)
     try {
-      final res = await ApiService.deleteDrawHistory(drawId, targetLevel);
-      if (!res.containsKey('error')) deleted = true;
-    } catch (_) {}
-
-    // 2. Firestore SDK
-    try {
-      final db = _maybeDb;
-      if (db != null) {
-        if (drawId.isNotEmpty && !drawId.startsWith('user_win_')) {
-          await db.collection('draws').doc(drawId).delete();
-          deleted = true;
-        }
-        if (winnerId.isNotEmpty) {
-          try {
-            await db.collection('users').doc(winnerId).update({
-              'hasWon': false,
-              'status': 'active',
-              'updatedAt': FieldValue.serverTimestamp(),
-            });
-          } catch (_) {}
-        }
-        if (winnerUniqueId.isNotEmpty) {
-          final uDocs = await db
-              .collection('users')
-              .where('uniqueId', isEqualTo: winnerUniqueId)
-              .get();
-          for (final uDoc in uDocs.docs) {
-            await db.collection('users').doc(uDoc.id).update({
-              'hasWon': false,
-              'status': 'active',
-              'updatedAt': FieldValue.serverTimestamp(),
-            });
+      if (drawId.isNotEmpty && !drawId.startsWith('user_win_')) {
+        // Delete the draw document
+        final token = await FirestoreDirectService.getAdminToken();
+        if (token != null) {
+          final url = 'https://firestore.googleapis.com/v1/projects/online-equb-managment-system'
+              '/databases/(default)/documents/draws/$drawId';
+          final resp = await (await _httpDeleteCall(url, token));
+          if (resp == 200 || resp == 204) {
+            deleted = true;
+            debugPrint('[deleteDrawHistory] FirestoreDirect delete draw OK');
           }
         }
-        deleted = true;
       }
-    } catch (_) {}
-
-    // 3. Reset user via REST API too
-    if (winnerId.isNotEmpty) {
-      Future.microtask(() async {
-        try {
-          await ApiService.adminUpdateUser(winnerId, {
-            'hasWon': false,
-            'status': 'active',
-            'updatedAt': _nowIso(),
-          });
-        } catch (_) {}
-      });
-    }
-
-    // 4. Local cache cleanup
-    try {
-      final cachedHistory = await OfflineService.getCachedDrawHistory(targetLevel);
-      cachedHistory.removeWhere((item) {
-        final dId = (item['drawId'] ?? item['id'] ?? '').toString();
-        final wId = (item['winnerId'] ?? item['winnerUniqueId'] ?? '').toString();
-        final wUid = (item['winnerUniqueId'] ?? item['winnerId'] ?? '').toString();
-        return dId == drawId ||
-            (winnerId.isNotEmpty && wId == winnerId) ||
-            (winnerUniqueId.isNotEmpty && wUid == winnerUniqueId);
-      });
-      await OfflineService.cacheDrawHistory(targetLevel, cachedHistory);
-      final cachedUsers = await OfflineService.getCachedUsers(targetLevel);
-      for (final u in cachedUsers) {
-        final uId = (u['userId'] ?? u['id'] ?? '').toString();
-        final uUniq = (u['uniqueId'] ?? '').toString();
-        if ((winnerId.isNotEmpty && uId == winnerId) ||
-            (winnerUniqueId.isNotEmpty && uUniq == winnerUniqueId)) {
-          u['hasWon'] = false;
-          u['status'] = 'active';
+      // Reset winner hasWon=false so they are eligible again
+      if (winnerId.isNotEmpty && !winnerId.startsWith('guest_')) {
+        await FirestoreDirectService.updateDocument('users', winnerId,
+            {'hasWon': false, 'status': 'active', 'updatedAt': now});
+      }
+      // Also reset by uniqueId if winnerId empty
+      if (winnerUniqueId.isNotEmpty) {
+        final users = await FirestoreDirectService.getUsersByLevel(targetLevel);
+        for (final u in users) {
+          if ((u['uniqueId'] ?? '').toString() == winnerUniqueId) {
+            final uid = (u['userId'] ?? u['id'] ?? '').toString();
+            if (uid.isNotEmpty) {
+              await FirestoreDirectService.updateDocument('users', uid,
+                  {'hasWon': false, 'status': 'active', 'updatedAt': now});
+            }
+          }
         }
       }
-      await OfflineService.cacheUsers(targetLevel, cachedUsers);
-    } catch (_) {}
+      deleted = true;
+    } catch (e) { debugPrint('[deleteDrawHistory] FirestoreDirect: $e'); }
+
+    // 2. REST API
+    if (!deleted) {
+      try {
+        final res = await ApiService.deleteDrawHistory(drawId, targetLevel);
+        if (!res.containsKey('error')) deleted = true;
+      } catch (_) {}
+    }
+
+    // 3. Firestore SDK fallback
+    if (!deleted) {
+      try {
+        final db = _maybeDb;
+        if (db != null && drawId.isNotEmpty && !drawId.startsWith('user_win_')) {
+          await db.collection('draws').doc(drawId).delete();
+          if (winnerId.isNotEmpty) {
+            await db.collection('users').doc(winnerId).update(
+                {'hasWon': false, 'status': 'active', 'updatedAt': FieldValue.serverTimestamp()});
+          }
+          deleted = true;
+        }
+      } catch (_) {}
+    }
+
+    // 4. REST API reset winner
+    Future.microtask(() async {
+      try {
+        if (winnerId.isNotEmpty) {
+          await ApiService.adminUpdateUser(winnerId, {'hasWon': false, 'status': 'active', 'updatedAt': now});
+        }
+      } catch (_) {}
+    });
 
     return deleted;
   }
 
+  // HTTP DELETE helper for FirestoreDirectService
+  static Future<int> _httpDeleteCall(String url, String token) async {
+    try {
+      final client = HttpClient();
+      final req = await client.deleteUrl(Uri.parse(url));
+      req.headers.set('Authorization', 'Bearer $token');
+      final resp = await req.close();
+      client.close();
+      debugPrint('[httpDeleteCall] $url → ${resp.statusCode}');
+      return resp.statusCode;
+    } catch (e) {
+      debugPrint('[httpDeleteCall] error: $e');
+      return 500;
+    }
+  }
   // ════════════════════════════════════════════════════════════════
   // PAYMENTS
   // ════════════════════════════════════════════════════════════════
@@ -1564,46 +1513,22 @@ class RoleManagementService {
   }) async {
     final now = _nowIso();
     final updates = <String, dynamic>{
-      'status': status == 'verified' ? 'verified' : 'rejected',
-      'rejectionReason': rejectionReason,
-      'verifiedByAdminId': adminId,
-      'verifiedAt': now,
-      'updatedAt': now,
+      'status':             status == 'verified' ? 'verified' : 'rejected',
+      'rejectionReason':    rejectionReason,
+      'verifiedByAdminId':  adminId,
+      'verifiedAt':         now,
+      'updatedAt':          now,
     };
 
     // 1. FirestoreDirectService — JWT bypasses rules
     try {
-      final token = await FirestoreDirectService.getAdminToken();
-      if (token != null) {
-        final url = 'https://firestore.googleapis.com/v1/projects/'
-            'online-equb-managment-system/databases/(default)/documents/'
-            'payments/$paymentId';
-        // Build PATCH body
-        final fields = <String, dynamic>{};
-        updates.forEach((k, v) {
-          if (v is String) fields[k] = {'stringValue': v};
-          else if (v is bool) fields[k] = {'booleanValue': v};
-          else if (v is int) fields[k] = {'integerValue': v.toString()};
-        });
-        final body = jsonEncode({'fields': fields});
-        final resp = await (await _httpClientPatch(url, token, body));
-        if (resp == 200) {
-          debugPrint('[verifyPayment] FirestoreDirect ✅ $status');
-          return true;
-        }
-      }
-    } catch (e) {
-      debugPrint('[verifyPayment] FirestoreDirect error: $e');
-    }
+      final ok = await FirestoreDirectService.updateDocument('payments', paymentId, updates);
+      if (ok) { debugPrint('[verifyPayment] FirestoreDirect OK'); return true; }
+    } catch (e) { debugPrint('[verifyPayment] FirestoreDirect: $e'); }
 
     // 2. REST API
     try {
-      final res = await ApiService.verifyPayment({
-        'paymentId': paymentId,
-        'status': status,
-        'rejectionReason': rejectionReason,
-        'adminId': adminId,
-      });
+      final res = await ApiService.verifyPayment({'paymentId': paymentId, 'status': status, 'rejectionReason': rejectionReason, 'adminId': adminId});
       if (res['success'] == true) return true;
     } catch (_) {}
 
@@ -1614,29 +1539,110 @@ class RoleManagementService {
         final docRef = db.collection('payments').doc(paymentId);
         final snap = await docRef.get();
         if (snap.exists) {
-          await docRef.update({
-            'status': status == 'verified' ? 'verified' : 'rejected',
-            'rejectionReason': rejectionReason,
-            'verifiedByAdminId': adminId,
-            'verifiedAt': FieldValue.serverTimestamp(),
-            'updatedAt': FieldValue.serverTimestamp(),
-          });
+          await docRef.update({...updates, 'updatedAt': FieldValue.serverTimestamp()});
           return true;
         }
       }
     } catch (_) {}
 
-    // 4. Offline queue
-    await OfflineService.queueOfflineVerification(
-      paymentId: paymentId,
-      status: status,
-      rejectionReason: rejectionReason,
-      adminId: adminId,
-      level: level,
-    );
+    await OfflineService.queueOfflineVerification(paymentId: paymentId, status: status, rejectionReason: rejectionReason, adminId: adminId, level: level);
     return true;
   }
 
+  // ── Send notification to user about payment status ──────────────────────
+  // Saves a notification doc in Firestore notifications collection.
+  // User sees it in their profile notification bell.
+  static Future<void> sendPaymentNotification({
+    required String userId,
+    required String userEmail,
+    required String status, // 'verified' or 'rejected'
+    required String amount,
+    required String level,
+    String rejectionReason = '',
+  }) async {
+    if (userId.isEmpty && userEmail.isEmpty) return;
+    final now = _nowIso();
+    final isApproved = status == 'verified';
+    final lvlAmharic = level == 'high' ? 'ከፍተኛ ደረጃ' : level == 'medium' ? 'መካከለኛ ደረጃ' : 'ዝቅተኛ ደረጃ';
+    final title = isApproved
+        ? '✅ ክፍያዎ ፀድቋል — Payment Approved'
+        : '❌ ክፍያዎ ተሰርዟል — Payment Rejected';
+    final body  = isApproved
+        ? '$lvlAmharic እቁብ ክፍያ ETB $amount ፀድቋል። Your $level level equb payment of ETB $amount has been approved.'
+        : '$lvlAmharic እቁብ ክፍያ ተሰርዟል። ምክንያት: $rejectionReason\nYour $level equb payment was rejected. Reason: $rejectionReason';
+    final notifData = <String, dynamic>{
+      'userId':    userId,
+      'userEmail': userEmail,
+      'title':     title,
+      'body':      body,
+      'type':      'payment_${status}',
+      'level':     level,
+      'amount':    amount,
+      'isRead':    false,
+      'createdAt': now,
+    };
+
+    // 1. FirestoreDirectService (PRIMARY — works on phone)
+    try {
+      await FirestoreDirectService.addDocument('notifications', notifData);
+      debugPrint('[sendPaymentNotification] saved to Firestore');
+      return;
+    } catch (e) { debugPrint('[sendPaymentNotification] FirestoreDirect: $e'); }
+
+    // 2. Firestore SDK fallback
+    try {
+      final db = _maybeDb;
+      if (db != null) {
+        await db.collection('notifications').add({
+          ...notifData,
+          'createdAt': FieldValue.serverTimestamp(),
+        });
+      }
+    } catch (_) {}
+  }
+
+  // ── Delete payment record (admin cleanup after 1 week) ───────────────────
+  // Removes the screenshot base64 to free storage, keeps metadata.
+  static Future<bool> deletePayment(String paymentId) async {
+    if (paymentId.isEmpty) return false;
+    final now = _nowIso();
+
+    // 1. FirestoreDirectService — JWT bypasses rules (PRIMARY on phone)
+    try {
+      final ok = await FirestoreDirectService.updateDocument(
+        'payments', paymentId,
+        {
+          'proofScreenshotBase64': '',
+          'screenshotClearedAt':   now,
+          'deletedAt':             now,
+          'status':                'deleted',
+          'updatedAt':             now,
+        },
+      );
+      if (ok) { debugPrint('[deletePayment] FirestoreDirect OK'); return true; }
+    } catch (e) { debugPrint('[deletePayment] FirestoreDirect: $e'); }
+
+    // 2. REST API backend
+    try {
+      final res = await ApiService.deletePaymentRecord(paymentId);
+      if (res['success'] == true) return true;
+    } catch (_) {}
+
+    // 3. Firestore SDK fallback
+    try {
+      final db = _maybeDb;
+      if (db != null) {
+        await db.collection('payments').doc(paymentId).update({
+          'proofScreenshotBase64': '',
+          'screenshotClearedAt':   FieldValue.serverTimestamp(),
+          'status':                'deleted',
+          'updatedAt':             FieldValue.serverTimestamp(),
+        });
+        return true;
+      }
+    } catch (_) {}
+    return false;
+  }
   // HTTP PATCH helper using dart:io HttpClient
   static Future<int> _httpClientPatch(String url, String token, String body) async {
     try {

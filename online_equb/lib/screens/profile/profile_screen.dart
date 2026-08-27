@@ -8,6 +8,7 @@ import '../../services/api_service.dart';
 import '../../utils/constants.dart';
 import '../../widgets/page_header_banner.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'notifications_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -56,7 +57,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
         title: Text(isAmharic ? 'የእኔ መገለጫ' : 'My Profile'),
         leading: const SmartBackButton(),
         actions: [
-          if (auth.isLoggedIn)
+          if (auth.isLoggedIn) ...[
+            // Notification bell
+            IconButton(
+              icon: const Icon(Icons.notifications_rounded),
+              tooltip: isAmharic ? 'ማሳወቂያዎች' : 'Notifications',
+              onPressed: () => Navigator.push(context, MaterialPageRoute(
+                  builder: (_) => const NotificationsScreen())),
+            ),
             IconButton(
               icon: const Icon(Icons.logout),
               tooltip: isAmharic ? 'ውጣ' : 'Logout',
@@ -65,6 +73,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 if (context.mounted) context.go('/login');
               },
             ),
+          ],
         ],
         bottom: PreferredSize(
           preferredSize: const Size.fromHeight(64),

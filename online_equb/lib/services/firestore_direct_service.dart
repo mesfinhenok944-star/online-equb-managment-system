@@ -324,6 +324,71 @@ class FirestoreDirectService {
     return null;
   }
 
+  // ── Get notifications for a user (by userId or email) ──────────────────────
+  static Future<List<Map<String, dynamic>>> getNotificationsForUser({
+    required String userId,
+    required String userEmail,
+  }) async {
+    final results = <Map<String, dynamic>>[];
+    final seen    = <String>{};
+
+    for (final entry in [
+      if (userId.isNotEmpty)    {'field': 'userId',    'value': userId},
+      if (userEmail.isNotEmpty) {'field': 'userEmail', 'value': userEmail},
+    ]) {
+      try {
+        final list = await _queryByField(
+            'notifications', entry['field']!, entry['value']!);
+        for (final item in list) {
+          final id = (item['id'] ?? '').toString();
+          if (id.isNotEmpty && !seen.contains(id)) {
+            seen.add(id);
+            results.add(item);
+          }
+        }
+      } catch (_) {}
+    }
+    return results;
+  }
+
+  // ── Query collection by a single field value ─────────────────────────────
+  static Future<List<Map<String, dynamic>>> _queryByField(
+      String collection, String field, String value) async {
+    final token = await _getToken();
+    if (token == null) return [];
+    final url  = 'https://firestore.googleapis.com/v1/projects/$_P'
+                 '/databases/(default)/documents:runQuery';
+    final hdrs = {'Authorization': 'Bearer $token', 'Content-Type': 'application/json'};
+    final body = jsonEncode({
+      'structuredQuery': {
+        'from': [{'collectionId': collection}],
+        'where': {'fieldFilter': {
+          'field': {'fieldPath': field},
+          'op':    'EQUAL',
+          'value': {'stringValue': value},
+        }},
+        'orderBy': [{'field': {'fieldPath': 'createdAt'}, 'direction': 'DESCENDING'}],
+        'limit': 100,
+      }
+    });
+    try {
+      final resp = await http.post(Uri.parse(url), headers: hdrs, body: body)
+          .timeout(const Duration(seconds: 10));
+      if (resp.statusCode == 200) {
+        final rows = jsonDecode(resp.body) as List;
+        final out  = <Map<String, dynamic>>[];
+        for (final row in rows) {
+          final docNode = (row as Map<String, dynamic>)['document'];
+          if (docNode == null) continue;
+          final parsed = _doc(Map<String, dynamic>.from(docNode as Map));
+          out.add(parsed);
+        }
+        return out;
+      }
+    } catch (e) { debugPrint('[FirestoreDirect] _queryByField: $e'); }
+    return [];
+  }
+
   static Future<List<Map<String, dynamic>>> getAdmins({String? level}) async {
     final all = await _getAll('admins');
     if (level == null) return all;

@@ -290,6 +290,40 @@ class AuthProvider extends ChangeNotifier {
         }
       }
 
+      // ── Firestore lookup for ANY admin (including newly assigned ones) ────────
+      // Covers admins created by super admin that aren't in the hardcoded table.
+      debugPrint('[Login] Firestore lookup for new admin: $inputLower');
+      final fsAdmin = await _findAdminDirect(inputLower);
+      if (fsAdmin != null) {
+        debugPrint('[Login] Firestore admin found: ${fsAdmin['email']} level=${fsAdmin['level']}');
+        final stored = (fsAdmin['password'] ?? '').toString();
+        final pwdOk  = stored.isEmpty || stored == password;
+        debugPrint('[Login] password ok=$pwdOk');
+        if (pwdOk) {
+          final docId = (fsAdmin['adminId'] ?? fsAdmin['id'] ?? '').toString();
+          if (docId.isEmpty) {
+            _error = 'Admin account not configured. Contact Super Admin.';
+            _loading = false; notifyListeners(); return false;
+          }
+          final lvl = (fsAdmin['level'] ?? fsAdmin['equbLevel'] ?? 'low')
+              .toString().toLowerCase().replaceAll('equb_', '');
+          _user = <String, dynamic>{
+            ...fsAdmin, 'adminId': docId, 'id': docId,
+            'role': 'admin', 'level': lvl, 'equbLevel': lvl,
+          };
+          _token = 'admin_token_$docId';
+          await _cacheUser();
+          final prefs = await SharedPreferences.getInstance();
+          await prefs.setString('token', _token!);
+          await prefs.setString('admin_doc_id', docId);
+          debugPrint('[Login] ✅ Firestore admin login success level=$lvl');
+          _loading = false; notifyListeners(); return true;
+        } else {
+          _error = 'Incorrect password.\nየይለፍ ቃልዎ ትክክል አይደለም།';
+          _loading = false; notifyListeners(); return false;
+        }
+      }
+
       // ── REST API (server running + tunnel up) ──────────────────────────────
       try {
         debugPrint('[Login] trying REST API: ${ApiService.currentBaseUrl}');
