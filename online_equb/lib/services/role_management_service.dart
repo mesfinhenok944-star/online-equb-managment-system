@@ -68,78 +68,66 @@ class RoleManagementService {
       };
 
   static Future<Map<String, dynamic>> getSuperAdminProfile() async {
-    // 1. REST API backend
+    // 1. FirestoreDirectService — JWT, bypasses rules
     try {
-      final res = await ApiService.superAdminGetStats();
-      if (res.containsKey('superAdmin') && res['superAdmin'] is Map) {
-        return Map<String, dynamic>.from(res['superAdmin'] as Map);
+      final token = await FirestoreDirectService.getAdminToken();
+      if (token != null) {
+        final url = 'https://firestore.googleapis.com/v1/projects/online-equb-managment-system'
+            '/databases/(default)/documents/meta/super_admin_profile';
+        final doc = await FirestoreDirectService.getDocument(url, token);
+        if (doc != null && doc['fields'] != null) {
+          final parsed = FirestoreDirectService.parseDocFields(
+              Map<String, dynamic>.from(doc['fields'] as Map));
+          if (parsed.isNotEmpty) return parsed;
+        }
       }
-    } catch (_) {}
-
+    } catch (e) { debugPrint('[getSuperAdminProfile] FirestoreDirect: $e'); }
     // 2. Firestore SDK
     try {
       final db = _maybeDb;
       if (db != null) {
-        final doc =
-            await db.collection('meta').doc('super_admin_profile').get();
-        if (doc.exists && doc.data() != null) {
-          return Map<String, dynamic>.from(doc.data()!);
-        }
+        final doc = await db.collection('meta').doc('super_admin_profile').get();
+        if (doc.exists && doc.data() != null) return Map<String, dynamic>.from(doc.data()!);
       }
     } catch (_) {}
-
     // 3. Local prefs
     try {
       final prefs = await SharedPreferences.getInstance();
       final raw = prefs.getString(_superProfileKey);
       if (raw != null && raw.isNotEmpty) {
         final decoded = jsonDecode(raw);
-        if (decoded is Map<String, dynamic> && decoded.isNotEmpty) {
-          return {...defaultSuperAdminProfile(), ...decoded};
-        }
+        if (decoded is Map<String, dynamic> && decoded.isNotEmpty) return {...defaultSuperAdminProfile(), ...decoded};
       }
     } catch (_) {}
-
-    final profile = defaultSuperAdminProfile();
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setString(_superProfileKey, jsonEncode(profile));
-    } catch (_) {}
-    return profile;
+    return defaultSuperAdminProfile();
   }
 
-  static Future<void> saveSuperAdminProfile(
-      Map<String, dynamic> profile) async {
+  static Future<void> saveSuperAdminProfile(Map<String, dynamic> profile) async {
     final merged = {
-      ...defaultSuperAdminProfile(),
-      ...profile,
-      'role': 'super_admin',
+      ...defaultSuperAdminProfile(), ...profile, 'role': 'super_admin',
     };
-    merged['fullName'] =
-        '${merged['firstName'] ?? ''} ${merged['middleName'] ?? ''} ${merged['lastName'] ?? ''}'
-            .replaceAll(RegExp(r'\s+'), ' ')
-            .trim();
+    merged['fullName'] = '${merged['firstName'] ?? ''} ${merged['middleName'] ?? ''} ${merged['lastName'] ?? ''}'
+        .replaceAll(RegExp(r'\s+'), ' ').trim();
+    final now = _nowIso();
+    merged['updatedAt'] = now;
 
-    // 1. REST API
+    // 1. FirestoreDirectService — JWT (PRIMARY)
     try {
-      await ApiService.superAdminUpdateAdmin('super_admin', merged);
-    } catch (_) {}
-
+      await FirestoreDirectService.updateDocument('meta', 'super_admin_profile', merged);
+      debugPrint('[saveSuperAdminProfile] FirestoreDirect OK');
+    } catch (e) { debugPrint('[saveSuperAdminProfile] FirestoreDirect: $e'); }
     // 2. Firestore SDK
     try {
       final db = _maybeDb;
       if (db != null) {
-        await db
-            .collection('meta')
-            .doc('super_admin_profile')
-            .set(merged, SetOptions(merge: true));
+        await db.collection('meta').doc('super_admin_profile').set(
+            {...merged, 'updatedAt': FieldValue.serverTimestamp()}, SetOptions(merge: true));
       }
     } catch (_) {}
-
     // 3. Local prefs
     try {
       final prefs = await SharedPreferences.getInstance();
-      await prefs.setString(_superProfileKey, jsonEncode(merged));
+      await prefs.setString(_superProfileKey, jsonEncode(_toSerializable(merged)));
     } catch (_) {}
   }
 

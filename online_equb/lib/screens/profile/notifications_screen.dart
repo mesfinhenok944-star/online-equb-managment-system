@@ -3,7 +3,6 @@ import 'package:provider/provider.dart';
 import '../../config/theme.dart';
 import '../../providers/auth_provider.dart';
 import '../../services/firestore_direct_service.dart';
-import '../../services/role_management_service.dart';
 import '../../widgets/smart_back_button.dart';
 import '../../widgets/offline_banner.dart';
 

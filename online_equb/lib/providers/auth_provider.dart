@@ -4,7 +4,6 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'dart:convert';
 import '../services/api_service.dart';
-import '../services/role_management_service.dart';
 import '../services/offline_service.dart';
 
 class AuthProvider extends ChangeNotifier {

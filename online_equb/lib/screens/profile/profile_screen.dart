@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import '../../config/theme.dart';
 import '../../providers/auth_provider.dart';
 import '../../services/api_service.dart';
+import '../../services/firestore_direct_service.dart';
 import '../../utils/constants.dart';
 import '../../widgets/page_header_banner.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -19,7 +20,8 @@ class ProfileScreen extends StatefulWidget {
 
 class _ProfileScreenState extends State<ProfileScreen> {
   List<dynamic> _transactions = [];
-  bool _loading = true;
+  bool _loading    = true;
+  int  _unreadCount = 0;
 
   @override
   void initState() {
@@ -29,22 +31,28 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   Future<void> _load() async {
     try {
-      try {
-        await context.read<AuthProvider>().refreshUserProfile();
-      } catch (_) {}
-
+      try { await context.read<AuthProvider>().refreshUserProfile(); } catch (_) {}
       final txns = await ApiService.getPaymentHistory();
-      if (mounted) {
-        setState(() {
-          _transactions = txns;
-          _loading = false;
-        });
-      }
+      if (mounted) setState(() { _transactions = txns; _loading = false; });
     } catch (_) {
       if (mounted) setState(() => _loading = false);
     }
+    _loadUnreadCount();
   }
 
+  Future<void> _loadUnreadCount() async {
+    try {
+      final auth      = context.read<AuthProvider>();
+      final user      = auth.user ?? {};
+      final userId    = (user['userId'] ?? user['id'] ?? user['uid'] ?? '').toString();
+      final userEmail = (user['email'] ?? '').toString().toLowerCase();
+      if (userId.isEmpty && userEmail.isEmpty) return;
+      final notifs = await FirestoreDirectService.getNotificationsForUser(
+          userId: userId, userEmail: userEmail);
+      final unread = notifs.where((n) => n['isRead'] != true).length;
+      if (mounted) setState(() => _unreadCount = unread);
+    } catch (_) {}
+  }
   @override
   Widget build(BuildContext context) {
     final auth = context.watch<AuthProvider>();
@@ -58,12 +66,30 @@ class _ProfileScreenState extends State<ProfileScreen> {
         leading: const SmartBackButton(),
         actions: [
           if (auth.isLoggedIn) ...[
-            // Notification bell
+            // Notification bell with unread badge
             IconButton(
-              icon: const Icon(Icons.notifications_rounded),
+              icon: Stack(clipBehavior: Clip.none, children: [
+                const Icon(Icons.notifications_rounded),
+                if (_unreadCount > 0)
+                  Positioned(
+                    right: -4, top: -4,
+                    child: Container(
+                      padding: const EdgeInsets.all(3),
+                      decoration: const BoxDecoration(
+                          color: Colors.red, shape: BoxShape.circle),
+                      child: Text('$_unreadCount',
+                          style: const TextStyle(color: Colors.white,
+                              fontSize: 9, fontWeight: FontWeight.bold)),
+                    ),
+                  ),
+              ]),
               tooltip: isAmharic ? 'ማሳወቂያዎች' : 'Notifications',
-              onPressed: () => Navigator.push(context, MaterialPageRoute(
-                  builder: (_) => const NotificationsScreen())),
+              onPressed: () async {
+                await Navigator.push(context, MaterialPageRoute(
+                    builder: (_) => const NotificationsScreen()));
+                // Reload count after returning from notifications screen
+                _loadUnreadCount();
+              },
             ),
             IconButton(
               icon: const Icon(Icons.logout),
