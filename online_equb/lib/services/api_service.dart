@@ -664,6 +664,18 @@ class ApiService {
     }
   }
 
+  /// Get notifications for user by email — no auth required
+  static Future<List<dynamic>> getNotificationsByEmail(String email) async {
+    try {
+      final encoded = Uri.encodeComponent(email.trim().toLowerCase());
+      final res = await _client.get(
+        Uri.parse('$_base/users/notifications-by-email?email=$encoded'),
+        headers: await _headers(auth: false),
+      );
+      return _decodeList(res);
+    } catch (_) { return []; }
+  }
+
     static Future<Map<String, dynamic>> verifyPayment(
       Map<String, dynamic> data) async {
     try {

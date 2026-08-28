@@ -5,6 +5,32 @@ const { db, auth, nowIso } = require('../config/firebase');
 const { verifyToken } = require('../middleware/auth');
 
 const router = Router();
+// ─────────────────────────────────────────────────────────────────────────────
+// PUBLIC — GET /api/v1/users/notifications-by-email?email= (no auth needed)
+// ─────────────────────────────────────────────────────────────────────────────
+router.get('/notifications-by-email', async (req, res) => {
+  try {
+    const email = (req.query.email || '').toLowerCase().trim();
+    if (!email || !email.includes('@')) return res.status(400).json({ error: 'Valid email required.' });
+    if (!db) return res.json([]);
+    let list = [];
+    try {
+      const snap = await db.collection('notifications')
+        .where('userEmail', '==', email)
+        .orderBy('createdAt', 'desc').limit(50).get();
+      list = snap.docs.map(d => ({ id: d.id, docId: d.id, ...d.data() }));
+    } catch (_) {
+      const snap = await db.collection('notifications').get();
+      list = snap.docs
+        .filter(d => (d.data().userEmail||'').toLowerCase()===email)
+        .map(d => ({ id: d.id, docId: d.id, ...d.data() }))
+        .sort((a,b) => (b.createdAt||'').localeCompare(a.createdAt||''));
+    }
+    console.log('[notifications-by-email]', email, '->', list.length);
+    return res.json(list);
+  } catch (err) { return res.status(500).json({ error: err.message }); }
+});
+
 router.use(verifyToken);
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -140,5 +166,6 @@ router.put('/change-password', async (req, res) => {
     return res.status(500).json({ error: err.message });
   }
 });
+
 
 module.exports = router;

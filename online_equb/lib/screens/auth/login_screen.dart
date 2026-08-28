@@ -9,6 +9,7 @@ import '../../services/api_service.dart';
 import '../../services/firestore_direct_service.dart';
 import '../../utils/constants.dart';
 import '../../widgets/page_header_banner.dart';
+import '../profile/notifications_screen.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -170,13 +171,27 @@ class _LoginScreenState extends State<LoginScreen> {
           }
           setState2(() { loadingState = true; errorState = null; notifList = []; });
           try {
-            final list = await FirestoreDirectService
-                .getNotificationsForUser(userId: '', userEmail: em);
+            List<Map<String, dynamic>> list = [];
+
+            // 1. Try backend REST API first (fastest, always fresh)
+            try {
+              final apiList = await ApiService.getNotificationsByEmail(em);
+              if (apiList.isNotEmpty) {
+                list = apiList.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+              }
+            } catch (_) {}
+
+            // 2. Fall back to FirestoreDirectService (JWT, no server needed)
+            if (list.isEmpty) {
+              list = await FirestoreDirectService.getNotificationsForUser(
+                  userId: '', userEmail: em);
+            }
+
             list.sort((a, b) => (b['createdAt']?.toString() ?? '')
                 .compareTo(a['createdAt']?.toString() ?? ''));
             setState2(() { notifList = list; loadingState = false; });
           } catch (e) {
-            setState2(() { errorState = 'Error: $e'; loadingState = false; });
+            setState2(() { errorState = 'Could not load. Check connection.\n$e'; loadingState = false; });
           }
         }
         return Dialog(
@@ -442,8 +457,9 @@ class _LoginScreenState extends State<LoginScreen> {
           // Any user can check their payment notifications by entering their email
           IconButton(
             icon: const Icon(Icons.notifications_rounded),
-            tooltip: isAmharic ? 'ማሳወቂያዎች' : 'Check Notifications',
-            onPressed: () => _showEmailNotificationDialog(context, isAmharic),
+            tooltip: isAmharic ? 'ማሳወቂያዎች' : 'Check Payment Notifications',
+            onPressed: () => Navigator.push(context, MaterialPageRoute(
+                builder: (_) => const NotificationsScreen())),
           ),
           IconButton(
             icon: const Icon(Icons.dns_rounded),

@@ -65,32 +65,31 @@ class _ProfileScreenState extends State<ProfileScreen> {
         title: Text(isAmharic ? 'የእኔ መገለጫ' : 'My Profile'),
         leading: const SmartBackButton(),
         actions: [
-          if (auth.isLoggedIn) ...[
-            // Notification bell with unread badge
-            IconButton(
-              icon: Stack(clipBehavior: Clip.none, children: [
-                const Icon(Icons.notifications_rounded),
-                if (_unreadCount > 0)
-                  Positioned(
-                    right: -4, top: -4,
-                    child: Container(
-                      padding: const EdgeInsets.all(3),
-                      decoration: const BoxDecoration(
-                          color: Colors.red, shape: BoxShape.circle),
-                      child: Text('$_unreadCount',
-                          style: const TextStyle(color: Colors.white,
-                              fontSize: 9, fontWeight: FontWeight.bold)),
-                    ),
+          // 🔔 Notification bell — always visible (guests & logged-in users)
+          IconButton(
+            icon: Stack(clipBehavior: Clip.none, children: [
+              const Icon(Icons.notifications_rounded),
+              if (_unreadCount > 0)
+                Positioned(
+                  right: -4, top: -4,
+                  child: Container(
+                    padding: const EdgeInsets.all(3),
+                    decoration: const BoxDecoration(
+                        color: Colors.red, shape: BoxShape.circle),
+                    child: Text('$_unreadCount',
+                        style: const TextStyle(color: Colors.white,
+                            fontSize: 9, fontWeight: FontWeight.bold)),
                   ),
-              ]),
-              tooltip: isAmharic ? 'ማሳወቂያዎች' : 'Notifications',
-              onPressed: () async {
-                await Navigator.push(context, MaterialPageRoute(
-                    builder: (_) => const NotificationsScreen()));
-                // Reload count after returning from notifications screen
-                _loadUnreadCount();
-              },
-            ),
+                ),
+            ]),
+            tooltip: isAmharic ? 'ማሳወቂያዎች' : 'Payment Notifications',
+            onPressed: () async {
+              await Navigator.push(context, MaterialPageRoute(
+                  builder: (_) => const NotificationsScreen()));
+              _loadUnreadCount();
+            },
+          ),
+          if (auth.isLoggedIn) ...[
             IconButton(
               icon: const Icon(Icons.logout),
               tooltip: isAmharic ? 'ውጣ' : 'Logout',
