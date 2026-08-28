@@ -635,7 +635,36 @@ class ApiService {
     }
   }
 
-  static Future<Map<String, dynamic>> verifyPayment(
+  /// Send OTP to email or phone for passwordless login
+  static Future<Map<String, dynamic>> sendOtp(String identifier) async {
+    try {
+      final res = await _client.post(
+        Uri.parse('$_base/auth/send-otp'),
+        headers: await _headers(auth: false),
+        body: jsonEncode({'identifier': identifier}),
+      );
+      return _decode(res);
+    } catch (e) {
+      return {'error': '$e'};
+    }
+  }
+
+  /// Verify OTP and get auth token
+  static Future<Map<String, dynamic>> verifyOtp(
+      String identifier, String otp) async {
+    try {
+      final res = await _client.post(
+        Uri.parse('$_base/auth/verify-otp'),
+        headers: await _headers(auth: false),
+        body: jsonEncode({'identifier': identifier, 'otp': otp}),
+      );
+      return _decode(res);
+    } catch (e) {
+      return {'error': '$e'};
+    }
+  }
+
+    static Future<Map<String, dynamic>> verifyPayment(
       Map<String, dynamic> data) async {
     try {
       final res = await _client.post(

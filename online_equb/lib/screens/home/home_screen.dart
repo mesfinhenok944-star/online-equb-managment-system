@@ -8,6 +8,8 @@ import '../../providers/auth_provider.dart';
 import '../../services/api_service.dart';
 import '../../services/firestore_service.dart';
 import '../../utils/constants.dart';
+import '../../services/firestore_direct_service.dart';
+import '../profile/notifications_screen.dart';
 import '../equb/equb_history_screen.dart';
 import '../payment/payment_screen.dart';
 
@@ -25,8 +27,9 @@ class _HomeScreenState extends State<HomeScreen>
     with SingleTickerProviderStateMixin {
   List<dynamic> _equbs = [];
   List<dynamic> _notifications = [];
-  bool _loading = true;
-  int _currentTab = 0;
+  bool _loading    = true;
+  int  _currentTab = 0;
+  int  _unreadCount = 0;
   String _language = AppConstants.currentLanguage;
 
   @override
@@ -53,9 +56,23 @@ class _HomeScreenState extends State<HomeScreen>
           _loading = false;
         });
       }
+      _loadUnreadCount();
     } catch (_) {
       if (mounted) setState(() => _loading = false);
     }
+  }
+  Future<void> _loadUnreadCount() async {
+    try {
+      final auth      = context.read<AuthProvider>();
+      final user      = auth.user ?? {};
+      final userId    = (user['userId'] ?? user['id'] ?? user['uid'] ?? '').toString();
+      final userEmail = (user['email'] ?? '').toString().toLowerCase();
+      if (userId.isEmpty && userEmail.isEmpty) return;
+      final notifs = await FirestoreDirectService.getNotificationsForUser(
+          userId: userId, userEmail: userEmail);
+      final unread = notifs.where((n) => n['isRead'] != true).length;
+      if (mounted) setState(() => _unreadCount = unread);
+    } catch (_) {}
   }
 
   void _toggleLanguage() {
@@ -84,6 +101,7 @@ class _HomeScreenState extends State<HomeScreen>
               isAdmin: auth.isAdmin,
               isAmharic: isAmharic,
               onToggleLanguage: _toggleLanguage,
+              unreadCount: _unreadCount,
             ),
 
             // ── Content ────────────────────────────────────────────────────
@@ -287,12 +305,44 @@ class _HomeScreenState extends State<HomeScreen>
             label: isAmharic ? 'እቁብ' : 'Equb',
           ),
           NavigationDestination(
-            icon: Icon(auth.isAdmin
-                ? Icons.admin_panel_settings_outlined
-                : Icons.person_outline_rounded),
-            selectedIcon: Icon(auth.isAdmin
-                ? Icons.admin_panel_settings_rounded
-                : Icons.person_rounded),
+            icon: Stack(clipBehavior: Clip.none, children: [
+              Icon(auth.isAdmin
+                  ? Icons.admin_panel_settings_outlined
+                  : Icons.person_outline_rounded),
+              if (_unreadCount > 0)
+                Positioned(
+                  right: -4, top: -4,
+                  child: Container(
+                    width: 14, height: 14,
+                    decoration: const BoxDecoration(
+                        color: Colors.red, shape: BoxShape.circle),
+                    child: Center(child: Text(
+                      _unreadCount > 9 ? '9+' : '$_unreadCount',
+                      style: const TextStyle(color: Colors.white,
+                          fontSize: 8, fontWeight: FontWeight.bold),
+                    )),
+                  ),
+                ),
+            ]),
+            selectedIcon: Stack(clipBehavior: Clip.none, children: [
+              Icon(auth.isAdmin
+                  ? Icons.admin_panel_settings_rounded
+                  : Icons.person_rounded),
+              if (_unreadCount > 0)
+                Positioned(
+                  right: -4, top: -4,
+                  child: Container(
+                    width: 14, height: 14,
+                    decoration: const BoxDecoration(
+                        color: Colors.red, shape: BoxShape.circle),
+                    child: Center(child: Text(
+                      _unreadCount > 9 ? '9+' : '$_unreadCount',
+                      style: const TextStyle(color: Colors.white,
+                          fontSize: 8, fontWeight: FontWeight.bold),
+                    )),
+                  ),
+                ),
+            ]),
             label: auth.isSuperAdmin
                 ? 'Super Admin'
                 : auth.isAdmin
@@ -402,6 +452,7 @@ class _TopBar extends StatelessWidget {
   final Map<String, dynamic>? user;
   final bool isLoggedIn, isSuperAdmin, isAdmin, isAmharic;
   final VoidCallback onToggleLanguage;
+  final int unreadCount;
 
   const _TopBar({
     required this.user,
@@ -410,6 +461,7 @@ class _TopBar extends StatelessWidget {
     required this.isAdmin,
     required this.isAmharic,
     required this.onToggleLanguage,
+    this.unreadCount = 0,
   });
 
   @override
@@ -480,6 +532,45 @@ class _TopBar extends StatelessWidget {
               ],
             ),
           ),
+          // Notification bell
+          if (isLoggedIn) ...[
+            const SizedBox(width: 8),
+            GestureDetector(
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const NotificationsScreen()),
+              ),
+              child: Container(
+                width: 38,
+                height: 38,
+                decoration: BoxDecoration(
+                  color: Colors.white12,
+                  shape: BoxShape.circle,
+                  border: Border.all(color: Colors.white24),
+                ),
+                child: Stack(clipBehavior: Clip.none, children: [
+                  const Center(
+                    child: Icon(Icons.notifications_rounded,
+                        color: Colors.white, size: 20),
+                  ),
+                  if (unreadCount > 0)
+                    Positioned(
+                      right: 4, top: 4,
+                      child: Container(
+                        width: 14, height: 14,
+                        decoration: const BoxDecoration(
+                            color: Colors.red, shape: BoxShape.circle),
+                        child: Center(child: Text(
+                          unreadCount > 9 ? '9+' : '$unreadCount',
+                          style: const TextStyle(color: Colors.white,
+                              fontSize: 8, fontWeight: FontWeight.bold),
+                        )),
+                      ),
+                    ),
+                ]),
+              ),
+            ),
+          ],
+          const SizedBox(width: 8),
           // Language toggle
           GestureDetector(
             onTap: onToggleLanguage,

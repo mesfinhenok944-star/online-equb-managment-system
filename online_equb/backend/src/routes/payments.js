@@ -231,6 +231,22 @@ router.post('/verify', async (req, res) => {
       }
     }
 
+    // ── Send SMS notification (fire-and-forget) ───────────────────────────────
+    try {
+      const { sendPaymentSms } = require('../config/sms');
+      const recipientPhone = payData.phoneNumber || payData.phone || '';
+      if (recipientPhone) {
+        sendPaymentSms({
+          phone:           recipientPhone,
+          fullName:        recipientName,
+          status:          isApproved ? 'verified' : 'rejected',
+          amount:          String(payData.amount || 0),
+          level:           payData.equbLevel || payData.level || 'low',
+          rejectionReason: rejectionReason || '',
+        }).catch(() => {});
+      }
+    } catch (_) {}
+
     return res.json({
       success:   true,
       paymentId,
