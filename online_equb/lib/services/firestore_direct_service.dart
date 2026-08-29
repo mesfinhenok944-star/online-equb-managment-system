@@ -325,16 +325,29 @@ class FirestoreDirectService {
   }
 
   // ── Get notifications for a user (by userId or email) ──────────────────────
-  static Future<List<Map<String, dynamic>>> getNotificationsForUser({
+    static Future<List<Map<String, dynamic>>> getNotificationsForUser({
     required String userId,
     required String userEmail,
+    String userPhone = '',
   }) async {
     final results = <Map<String, dynamic>>[];
     final seen    = <String>{};
 
+    // Normalise phone number
+    String normPhone = '';
+    if (userPhone.isNotEmpty) {
+      normPhone = userPhone.trim().replaceAll(RegExp(r'\s+'), '');
+      if (normPhone.startsWith('09') || normPhone.startsWith('07')) {
+        normPhone = '+251${normPhone.substring(1)}';
+      } else if (normPhone.startsWith('251') && !normPhone.startsWith('+')) {
+        normPhone = '+$normPhone';
+      }
+    }
+
     for (final entry in [
       if (userId.isNotEmpty)    {'field': 'userId',    'value': userId},
       if (userEmail.isNotEmpty) {'field': 'userEmail', 'value': userEmail},
+      if (normPhone.isNotEmpty) {'field': 'userPhone', 'value': normPhone},
     ]) {
       try {
         final list = await _queryByField(

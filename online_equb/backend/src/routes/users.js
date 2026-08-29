@@ -6,31 +6,49 @@ const { verifyToken } = require('../middleware/auth');
 
 const router = Router();
 // ─────────────────────────────────────────────────────────────────────────────
-// PUBLIC — GET /api/v1/users/notifications-by-email?email= (no auth needed)
-// ─────────────────────────────────────────────────────────────────────────────
+// PUBLIC — GET /api/v1/users/notifications-by-email
+// Accepts: ?email=user@gmail.com  OR  ?email=0912345678
 router.get('/notifications-by-email', async (req, res) => {
   try {
-    const email = (req.query.email || '').toLowerCase().trim();
-    if (!email || !email.includes('@')) return res.status(400).json({ error: 'Valid email required.' });
+    const raw = (req.query.email || req.query.phone || '').trim();
+    if (!raw) return res.status(400).json({ error: 'Email or phone required.' });
     if (!db) return res.json([]);
+
+    let email = '', phone = '';
+    if (raw.includes('@')) {
+      email = raw.toLowerCase();
+    } else {
+      phone = raw.replace(/\s+/g, '');
+      if (phone.startsWith('09') || phone.startsWith('07')) phone = '+251' + phone.substring(1);
+      else if (phone.startsWith('251') && !phone.startsWith('+')) phone = '+' + phone;
+    }
+    const identifier = email || phone;
+    const field = email ? 'userEmail' : 'userPhone';
+
     let list = [];
     try {
       const snap = await db.collection('notifications')
-        .where('userEmail', '==', email)
+        .where(field, '==', identifier)
         .orderBy('createdAt', 'desc').limit(50).get();
       list = snap.docs.map(d => ({ id: d.id, docId: d.id, ...d.data() }));
     } catch (_) {
       const snap = await db.collection('notifications').get();
       list = snap.docs
-        .filter(d => (d.data().userEmail||'').toLowerCase()===email)
+        .filter(d => {
+          const n = d.data();
+          return (n.userEmail||'').toLowerCase() === identifier ||
+                 (n.userPhone||'').replace(/\s+/g,'') === identifier;
+        })
         .map(d => ({ id: d.id, docId: d.id, ...d.data() }))
         .sort((a,b) => (b.createdAt||'').localeCompare(a.createdAt||''));
     }
-    console.log('[notifications-by-email]', email, '->', list.length);
+    console.log('[notifications]', identifier, '->', list.length);
     return res.json(list);
-  } catch (err) { return res.status(500).json({ error: err.message }); }
+  } catch (err) {
+    console.error('[notifications-by-email]', err.message);
+    return res.status(500).json({ error: err.message });
+  }
 });
-
 router.use(verifyToken);
 
 // ─────────────────────────────────────────────────────────────────────────────

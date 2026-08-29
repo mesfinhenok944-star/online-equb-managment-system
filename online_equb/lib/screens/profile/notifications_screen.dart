@@ -61,23 +61,39 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     try {
       final user  = context.read<AuthProvider>().user ?? {};
       final email = (user['email'] ?? '').toString().trim().toLowerCase();
+      final phone = (user['phoneNumber'] ?? user['phone'] ?? '').toString().trim();
       if (email.isNotEmpty) {
         _emailCtrl.text = email;
         _loadNotifications(email);
+      } else if (phone.isNotEmpty) {
+        _emailCtrl.text = phone;
+        _loadNotifications(phone);
       }
     } catch (_) {}
   }
 
-  // ── Load notifications by email ───────────────────────────────────────────
-  Future<void> _loadNotifications(String email) async {
-    final em = email.trim().toLowerCase();
-    if (em.isEmpty || !em.contains('@')) {
-      setState(() => _error = t('Please enter a valid email address.',
-                               'ትክክለኛ ኢሜይል ያስፈልጋል።'));
+  // ── Load notifications by email OR phone ──────────────────────────────────
+  Future<void> _loadNotifications(String identifier) async {
+    final id = identifier.trim();
+    if (id.isEmpty) {
+      setState(() => _error = t(
+          'Please enter your registered email or phone number.',
+          'የተመዘገቡበት ኢሜይል ወይም ስልክ ቁጥር ያስፈልጋል።'));
       return;
     }
+    // Normalise: email stays as-is, phone → +251...
+    String em = id.toLowerCase();
+    if (!id.contains('@')) {
+      String phone = id.replaceAll(RegExp(r'\s+'), '');
+      if (phone.startsWith('09') || phone.startsWith('07')) {
+        phone = '+251${phone.substring(1)}';
+      } else if (phone.startsWith('251') && !phone.startsWith('+')) {
+        phone = '+$phone';
+      }
+      em = phone;
+    }
 
-    setState(() { _loading = true; _error = null; _searched = true; _emailUsed = em; });
+    setState(() { _loading = true; _error = null; _searched = true; _emailUsed = id; });
 
     try {
       List<Map<String, dynamic>> results = [];
@@ -97,8 +113,12 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
       // 2. FirestoreDirectService (JWT — works without server)
       if (results.isEmpty) {
         try {
+          // Pass both email and phone so both fields are searched
+          final isPhone = !id.contains('@');
           results = await FirestoreDirectService.getNotificationsForUser(
-              userId: '', userEmail: em);
+              userId:    '',
+              userEmail: isPhone ? '' : em,
+              userPhone: isPhone ? em : '');
           debugPrint('[Notifications] Firestore JWT → ${results.length} for $em');
         } catch (e) {
           debugPrint('[Notifications] Firestore error: $e');
@@ -212,9 +232,9 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                   textInputAction: TextInputAction.search,
                   onSubmitted: (v) => _loadNotifications(v),
                   decoration: InputDecoration(
-                    hintText: t('Enter your email (e.g. user@gmail.com)',
-                                'ኢሜይልዎ (ለምሳሌ user@gmail.com)'),
-                    prefixIcon: const Icon(Icons.email_outlined, size: 18),
+                    hintText: t('Email or phone (e.g. user@gmail.com or 0912345678)',
+                                'ኢሜይል ወይም ስልክ (ለምሳሌ user@gmail.com ወይም 0912345678)'),
+                    prefixIcon: const Icon(Icons.contact_mail_rounded, size: 18),
                     border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(12)),
                     filled: true,

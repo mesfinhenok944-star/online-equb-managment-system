@@ -1543,27 +1543,32 @@ class RoleManagementService {
   static Future<void> sendPaymentNotification({
     required String userId,
     required String userEmail,
-    required String status, // 'verified' or 'rejected'
+    required String status,
     required String amount,
     required String level,
     String rejectionReason = '',
+    String userPhone = '',
+    String fullName  = '',
   }) async {
-    if (userId.isEmpty && userEmail.isEmpty) return;
+    if (userId.isEmpty && userEmail.isEmpty && userPhone.isEmpty) return;
     final now = _nowIso();
-    final isApproved = status == 'verified';
-    final lvlAmharic = level == 'high' ? 'ከፍተኛ ደረጃ' : level == 'medium' ? 'መካከለኛ ደረጃ' : 'ዝቅተኛ ደረጃ';
+    final isApproved  = status == 'verified';
+    final lvlAmharic  = level == 'high' ? 'ከፍተኛ ደረጃ' : level == 'medium' ? 'መካከለኛ ደረጃ' : 'ዝቅተኛ ደረጃ';
     final title = isApproved
         ? '✅ ክፍያዎ ፀድቋል — Payment Approved'
         : '❌ ክፍያዎ ተሰርዟል — Payment Rejected';
+    final nameStr = fullName.isNotEmpty ? ' — $fullName' : '';
     final body  = isApproved
-        ? '$lvlAmharic እቁብ ክፍያ ETB $amount ፀድቋል። Your $level level equb payment of ETB $amount has been approved.'
-        : '$lvlAmharic እቁብ ክፍያ ተሰርዟል። ምክንያት: $rejectionReason\nYour $level equb payment was rejected. Reason: $rejectionReason';
+        ? '$lvlAmharic እቁብ ክፍያ ETB $amount ፀድቋል$nameStr.\nYour $level level equb payment of ETB $amount has been approved.'
+        : '$lvlAmharic እቁብ ክፍያ ተሰርዟል$nameStr. ምክንያት: $rejectionReason\nRejection reason: $rejectionReason';
     final notifData = <String, dynamic>{
       'userId':    userId,
       'userEmail': userEmail,
+      'userPhone': userPhone,
+      'fullName':  fullName,
       'title':     title,
       'body':      body,
-      'type':      'payment_${status}',
+      'type':      'payment_$status',
       'level':     level,
       'amount':    amount,
       'isRead':    false,

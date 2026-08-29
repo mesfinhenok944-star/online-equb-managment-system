@@ -198,11 +198,12 @@ router.post('/verify', async (req, res) => {
     const notifData = {
       userId:      payData.userId      || '',
       userEmail:   payData.email       || '',
+      userPhone:   payData.phoneNumber || payData.phone || '',
       fullName:    payData.fullName    || payData.firstName || '',
       title:       isApproved ? '✅ ክፍያዎ ፀድቋል — Payment Approved' : '❌ ክፍያዎ ተሰርዟል — Payment Rejected',
       body:        isApproved
-        ? `${payData.equbLevel?.toUpperCase()} Level equb payment of ETB ${payData.amount} approved.`
-        : `Payment rejected. Reason: ${rejectionReason || 'See admin'}`,
+        ? `${payData.equbLevel?.toUpperCase()} Level equb payment of ETB ${payData.amount} approved by admin.`
+        : `Payment rejected. Reason: ${rejectionReason || 'Contact admin'}`,
       type:        `payment_${isApproved ? 'verified' : 'rejected'}`,
       level:       payData.equbLevel   || '',
       amount:      String(payData.amount || 0),

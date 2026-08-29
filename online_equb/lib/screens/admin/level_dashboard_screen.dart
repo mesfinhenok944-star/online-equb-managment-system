@@ -2467,12 +2467,15 @@ class _LevelDashboardScreenState extends State<LevelDashboardScreen> {
     );
     // Send in-app + email notification
     if (ok && item != null) {
-      final userId    = (item['userId']  ?? '').toString();
-      final userEmail = (item['email']   ?? '').toString();
-      final amount    = (item['amount']  ?? '0').toString();
-      if (userId.isNotEmpty || userEmail.isNotEmpty) {
+      final userId    = (item['userId']    ?? '').toString();
+      final userEmail = (item['email']     ?? '').toString();
+      final userPhone = (item['phoneNumber'] ?? item['phone'] ?? '').toString();
+      final fullName  = (item['fullName']  ?? item['name'] ?? item['firstName'] ?? '').toString();
+      final amount    = (item['amount']    ?? '0').toString();
+      if (userId.isNotEmpty || userEmail.isNotEmpty || userPhone.isNotEmpty) {
         RoleManagementService.sendPaymentNotification(
           userId: userId, userEmail: userEmail,
+          userPhone: userPhone, fullName: fullName,
           status: status, amount: amount,
           level: widget.level, rejectionReason: reason,
         );

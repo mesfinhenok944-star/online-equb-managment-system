@@ -665,9 +665,11 @@ class ApiService {
   }
 
   /// Get notifications for user by email — no auth required
-  static Future<List<dynamic>> getNotificationsByEmail(String email) async {
+  /// Get notifications by email or phone — no auth required
+  static Future<List<dynamic>> getNotificationsByEmail(String identifier) async {
     try {
-      final encoded = Uri.encodeComponent(email.trim().toLowerCase());
+      // Pass as-is — backend normalises phone numbers
+      final encoded = Uri.encodeComponent(identifier.trim());
       final res = await _client.get(
         Uri.parse('$_base/users/notifications-by-email?email=$encoded'),
         headers: await _headers(auth: false),
