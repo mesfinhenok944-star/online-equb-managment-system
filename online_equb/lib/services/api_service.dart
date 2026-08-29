@@ -19,42 +19,47 @@ class ApiService {
   //      falls back to localhost (which only works if on same machine)
   static String? _overrideBaseUrl;
 
+  // ── Production backend URL (Render.com free hosting) ───────────────────
+  // Change this to your actual Render URL after deployment
+  static const String _productionUrl = 'https://online-equb-backend.onrender.com/api/v1';
+
   static String get _base {
+    // 1. User-set override (from server settings dialog in login screen)
     if (_overrideBaseUrl != null && _overrideBaseUrl!.isNotEmpty) {
       return _overrideBaseUrl!;
     }
-    if (kIsWeb) return 'http://localhost:8080/api/v1';
+    // 2. Cached URL (set via setServerUrl())
+    if (_cachedBase != null && _cachedBase!.isNotEmpty) {
+      return _cachedBase!;
+    }
+    // 3. Web — use production URL
+    if (kIsWeb) return _productionUrl;
+    // 4. Android/iOS — use production Render URL (works on any network)
     try {
-      if (Platform.isAndroid) {
-        // Real device: use cached URL (tunnel or user-set LAN IP)
-        // Falls back to tunnel URL which works over any network
-        return _cachedBase ?? 'https://equb-admin-server.loca.lt/api/v1';
+      if (Platform.isAndroid || Platform.isIOS) {
+        return _productionUrl;
       }
     } catch (_) {}
+    // 5. Desktop (Linux/Windows/Mac) — localhost for development
     return 'http://localhost:8080/api/v1';
   }
 
   static String? _cachedBase;
 
   /// Call once at app start to detect the correct server URL.
-  /// On a real Android device, the backend must be reachable via its
-  /// LAN IP (e.g. 192.168.1.x) not the emulator shortcut 10.0.2.2.
+  /// Uses Render production URL by default. User can override via settings dialog.
   static Future<void> detectServerUrl() async {
     try {
-      final prefs = await SharedPreferences.getInstance();
+      final prefs  = await SharedPreferences.getInstance();
       final stored = prefs.getString('server_base_url');
       if (stored != null && stored.isNotEmpty) {
-        _cachedBase = stored;
+        _cachedBase      = stored;
         _overrideBaseUrl = stored;
         return;
       }
     } catch (_) {}
-    // Default: public tunnel URL works on real phone over any network
-    try {
-      if (!kIsWeb && Platform.isAndroid) {
-        _cachedBase = 'https://equb-admin-server.loca.lt/api/v1';
-      }
-    } catch (_) {}
+    // Default to production URL — no local server needed on real phone
+    _cachedBase = null; // will use _productionUrl via _base getter
   }
 
   /// Persist a custom server base URL (e.g. http://192.168.1.134:8080/api/v1)

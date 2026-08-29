@@ -58,14 +58,6 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
-  // ── Quick fill for testing ────────────────────────────────────────────────
-  void _fill(String email, String pass) {
-    setState(() {
-      _email.text    = email;
-      _password.text = pass;
-    });
-  }
-
   // ── Server dialog (for LAN IP setup) ─────────────────────────────────────
   void _showServerDialog(BuildContext ctx) {
     final ctrl = TextEditingController(
@@ -236,24 +228,7 @@ class _LoginScreenState extends State<LoginScreen> {
                 ),
                 const SizedBox(height: 20),
 
-                // ── Quick fill chips (for testing) ────────────────────────
-                SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: Row(children: [
-                    Text(t('Quick Fill: ', 'ፈጣን ሙሌት: '),
-                        style: const TextStyle(fontSize: 12,
-                            fontWeight: FontWeight.bold,
-                            color: AppColors.textSecondary)),
-                    _chip('👑 Super Admin', () => _fill('abebe@gmail.com', 'abebe1212')),
-                    const SizedBox(width: 6),
-                    _chip('🛡️ Low Admin',  () => _fill('admin@equb.et',   'admin123')),
-                    const SizedBox(width: 6),
-                    _chip('🛡️ Med Admin',  () => _fill('abe@gmail.com',   '12345678')),
-                    const SizedBox(width: 6),
-                    _chip('🛡️ High Admin', () => _fill('almu@gmail.com',  '123456789')),
-                  ]),
-                ),
-                const SizedBox(height: 20),
+                const SizedBox(height: 8),
 
                 // ── Email / Username field ────────────────────────────────
                 Text(t('Email or Username', 'ኢሜይል ወይም ስም'),
@@ -429,14 +404,5 @@ class _LoginScreenState extends State<LoginScreen> {
     ));
   }
 
-  // ── Action chip helper ────────────────────────────────────────────────────
-  Widget _chip(String label, VoidCallback onTap) {
-    return ActionChip(
-      label: Text(label, style: const TextStyle(fontSize: 11)),
-      onPressed: onTap,
-      backgroundColor: AppColors.primary.withOpacity(0.07),
-      side: BorderSide(color: AppColors.primary.withOpacity(0.3)),
-      padding: const EdgeInsets.symmetric(horizontal: 4),
-    );
-  }
+
 }

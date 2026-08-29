@@ -287,8 +287,11 @@ class _LevelDashboardScreenState extends State<LevelDashboardScreen> {
                   shape: BoxShape.circle),
             ),
             const SizedBox(width: 8),
-            Text(t('$_levelLabel Level Dashboard',
-                '$_levelLabel ደረጃ ዳሽቦርድ')),
+            Text(_currentNavIndex == 1
+                ? t('$_levelLabel — Payments', '$_levelLabel — ክፍያዎች')
+                : _currentNavIndex == 2
+                    ? t('$_levelLabel — History', '$_levelLabel — ታሪክ')
+                    : t('$_levelLabel Level Dashboard', '$_levelLabel ደረጃ ዳሽቦርድ')),
           ],
         ),
         backgroundColor: _levelColor,
@@ -297,6 +300,12 @@ class _LevelDashboardScreenState extends State<LevelDashboardScreen> {
         leading: IconButton(
           icon: const Icon(Icons.arrow_back_ios_new_rounded),
           onPressed: () {
+            // If viewing Payments or History — go back to Members tab first
+            if (_currentNavIndex != 0) {
+              setState(() => _currentNavIndex = 0);
+              return;
+            }
+            // On Members tab — leave the dashboard
             if (Navigator.canPop(context)) {
               Navigator.pop(context);
             } else {
