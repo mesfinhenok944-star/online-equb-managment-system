@@ -699,8 +699,10 @@ class _LiveWheelTabState extends State<_LiveWheelTab> {
           const SizedBox(height: 14),
 
           // ── Registered Users Count Chips ────────────────────────────────
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+          Wrap(
+            alignment: WrapAlignment.center,
+            spacing: 8,
+            runSpacing: 8,
             children: [
               _chip(
                 Icons.people_alt_rounded,
