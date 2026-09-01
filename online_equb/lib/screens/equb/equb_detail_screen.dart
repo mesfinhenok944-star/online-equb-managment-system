@@ -35,8 +35,8 @@ class _EqubDetailScreenState extends State<EqubDetailScreen>
   @override
   void initState() {
     super.initState();
-    // 3 Tabs: Details, Live Wheel Algorithm, Draw History
-    _tabController = TabController(length: 3, vsync: this);
+    // 3 Tabs: Details (0), Live Wheel Algorithm (1 - default focus), Draw History (2)
+    _tabController = TabController(length: 3, vsync: this, initialIndex: 1);
     _load();
     _startLiveSyncTimer();
   }

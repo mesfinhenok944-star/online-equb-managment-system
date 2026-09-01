@@ -410,12 +410,7 @@ class _HomeScreenState extends State<HomeScreen>
         },
         onGoEqubs: () {
           Navigator.pop(context);
-          final auth = context.read<AuthProvider>();
-          if (!auth.isLoggedIn) {
-            context.go('/login');
-          } else {
-            context.go('/equbs');
-          }
+          context.go('/equbs/$level');
         },
       ),
     );
@@ -1497,9 +1492,9 @@ class _LevelDetailSheet extends StatelessWidget {
               width: double.infinity,
               child: ElevatedButton.icon(
                 onPressed: onGoEqubs,
-                icon: const Icon(Icons.savings_rounded, color: Colors.white),
+                icon: const Icon(Icons.motion_photos_on_rounded, color: Colors.white),
                 label: Text(
-                  isAmharic ? 'ወደ እቁብ ዳሽቦርድ ሂድ' : 'Go to Equb Dashboard',
+                  isAmharic ? '🎡 የቀጥታ ዕጣ መንኮራኩር ይመልከቱ' : '🎡 View Live Draw Circle Wheel',
                   style: const TextStyle(
                       fontWeight: FontWeight.bold,
                       fontSize: 14,
