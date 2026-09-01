@@ -101,14 +101,11 @@ class _EqubDrawWheelState extends State<EqubDrawWheel>
   static String _pid(Map<String, dynamic> p) =>
       (p['userId'] ?? p['id'] ?? p['participantId'] ?? '').toString();
 
-  /// Wheel diameter scales with participant count so slices remain visible
+  /// Wheel diameter scales responsively with screen width so it never overflows mobile devices
   double get _wheelDiameter {
-    final n = _eligible.length;
-    if (n > 150) return 600; // largest — up to 200+ users
-    if (n > 100) return 540;
-    if (n > 60)  return 480;
-    if (n > 30)  return 420;
-    return 360;
+    final screenW = MediaQuery.of(context).size.width;
+    final maxAvailable = screenW > 600 ? 450.0 : (screenW - 32.0).clamp(240.0, 350.0);
+    return maxAvailable;
   }
 
   // ── SPIN ──────────────────────────────────────────────────────────────────
@@ -737,11 +734,11 @@ class _WheelPainter extends CustomPainter {
             wheel * 0.62);
       } else {
         // First name + #ID
-        final p         = eligible[i];
-        final rawFirst  = (p['firstName'] ?? p['fullName'] ?? '').toString().trim();
-        final firstName = rawFirst.isNotEmpty ? rawFirst.split(' ').first : 'U${i+1}';
-        final rawId     = (p['uniqueId'] ?? _pid(p)).toString().trim();
-        final idStr     = rawId.isNotEmpty ? '#$rawId' : '#${i+1}';
+        final Map<String, dynamic>? p = (eligible.isNotEmpty && i < eligible.length) ? eligible[i] : null;
+        final rawFirst  = p != null ? (p['firstName'] ?? p['fullName'] ?? '').toString().trim() : '';
+        final firstName = rawFirst.isNotEmpty ? rawFirst.split(' ').first : (eligible.isEmpty ? 'ዕጣ' : 'U${i+1}');
+        final rawId     = p != null ? (p['uniqueId'] ?? _pid(p)).toString().trim() : '';
+        final idStr     = rawId.isNotEmpty ? '#$rawId' : (eligible.isEmpty ? 'መንኮራኩር' : '#${i+1}');
         final arcLen    = wheel * sliceAngle;
         final nameSize  = min(12.0, max(6.5, arcLen * 0.22));
         final idSize    = nameSize * 0.82;
