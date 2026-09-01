@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "64783274886",
+    "project_id": "online-equb-managment-system",
+    "storage_bucket": "online-equb-managment-system.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:64783274886:android:0e441b6c94bac31ea69207",
+        "android_client_info": {
+          "package_name": "et.equb.equb_app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAFPB1jqtEBDE5XJzfxe4tBieqKE5g6L6E"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

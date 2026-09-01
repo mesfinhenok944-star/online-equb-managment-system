@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
@@ -26,6 +27,7 @@ class _SuperAdminDashboardScreenState
   String _filterStatus = 'all';
   bool _isAmharic = false;
   bool _isTableView = true;
+  Timer? _autoSyncTimer;
 
   // ── language helpers ──────────────────────────────────────────────────────
   String t(String en, String am) => _isAmharic ? am : en;
@@ -34,6 +36,26 @@ class _SuperAdminDashboardScreenState
   void initState() {
     super.initState();
     _load();
+    _autoSyncTimer = Timer.periodic(const Duration(seconds: 4), (_) {
+      if (mounted && !_loading) {
+        _silentLoad();
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _autoSyncTimer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _silentLoad() async {
+    try {
+      final admins = await RoleManagementService.getAdmins();
+      if (!mounted) return;
+      setState(() => _admins = admins);
+      _loadLevelStats();
+    } catch (_) {}
   }
 
   Future<void> _load() async {

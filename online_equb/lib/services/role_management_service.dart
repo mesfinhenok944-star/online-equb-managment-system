@@ -72,7 +72,7 @@ class RoleManagementService {
     try {
       final token = await FirestoreDirectService.getAdminToken();
       if (token != null) {
-        final url = 'https://firestore.googleapis.com/v1/projects/online-equb-managment-system'
+        final url = 'https://firestore.googleapis.com/v1/projects/online-equb-managment-sy-b5517'
             '/databases/(default)/documents/meta/super_admin_profile';
         final doc = await FirestoreDirectService.getDocument(url, token);
         if (doc != null && doc['fields'] != null) {
@@ -140,6 +140,30 @@ class RoleManagementService {
     final List<Map<String, dynamic>> results = [];
     final Set<String> seenIds = {};
 
+    // 0. Firestore SDK on Web (PRIMARY for Web deployment)
+    if (kIsWeb) {
+      try {
+        final db = _maybeDb;
+        if (db != null) {
+          final snap = await db.collection('admins').get();
+          for (final doc in snap.docs) {
+            final data = doc.data();
+            if ((data['status'] ?? 'active') == 'deleted') continue;
+            final aLvl = (data['level'] ?? data['equbLevel'] ?? 'low')
+                .toString().toLowerCase().replaceAll('equb_', '');
+            if (level == null || level == 'all' || aLvl == level.toLowerCase()) {
+              final item = <String, dynamic>{...data, 'adminId': doc.id, 'id': doc.id};
+              if (!seenIds.contains(doc.id)) { results.add(item); seenIds.add(doc.id); }
+            }
+          }
+          if (results.isNotEmpty) {
+            OfflineService.cacheAdmins(results);
+            return results;
+          }
+        }
+      } catch (e) { debugPrint('[getAdmins Web Firestore] $e'); }
+    }
+
     // 1. FirestoreDirectService -- service account JWT, bypasses rules
     try {
       final list = await FirestoreDirectService.getAdmins(level: level);
@@ -167,7 +191,7 @@ class RoleManagementService {
           if ((data['status'] ?? 'active') == 'deleted') continue;
           final aLvl = (data['level'] ?? data['equbLevel'] ?? 'low')
               .toString().toLowerCase().replaceAll('equb_', '');
-          if (level == null || level == 'all' || aLvl == level!.toLowerCase()) {
+          if (level == null || level == 'all' || aLvl == level.toLowerCase()) {
             final item = <String, dynamic>{...data, 'adminId': doc.id, 'id': doc.id};
             if (!seenIds.contains(doc.id)) { results.add(item); seenIds.add(doc.id); }
           }
@@ -199,7 +223,7 @@ class RoleManagementService {
       for (final a in cached) {
         final id = (a['adminId'] ?? a['id'] ?? '').toString();
         final aLvl = (a['level'] ?? a['equbLevel'] ?? 'low').toString().toLowerCase();
-        if ((level == null || level == 'all' || aLvl == level!.toLowerCase()) &&
+        if ((level == null || level == 'all' || aLvl == level.toLowerCase()) &&
             !seenIds.contains(id)) { results.add(a); seenIds.add(id); }
       }
     } catch (_) {}
@@ -524,6 +548,32 @@ class RoleManagementService {
     final lvlLower = level.toLowerCase().replaceAll('equb_', '').trim();
     final List<Map<String, dynamic>> results = [];
     final Set<String> seenIds = {};
+
+    // 0. Firestore SDK on Web (PRIMARY for Web deployment)
+    if (kIsWeb) {
+      try {
+        final db = _maybeDb;
+        if (db != null) {
+          for (final field in ['equbLevel', 'level']) {
+            final snap = await db.collection('users')
+                .where(field, isEqualTo: lvlLower)
+                .get();
+            for (final d in snap.docs) {
+              if (seenIds.contains(d.id)) continue;
+              final data = d.data();
+              if ((data['status'] ?? 'active').toString() == 'deleted') continue;
+              results.add({...data, 'userId': d.id, 'id': d.id});
+              seenIds.add(d.id);
+            }
+            if (results.isNotEmpty) break;
+          }
+          if (results.isNotEmpty) {
+            await OfflineService.cacheUsers(lvlLower, results);
+            return results;
+          }
+        }
+      } catch (e) { debugPrint('[getUsersByLevel Web Firestore] $e'); }
+    }
 
     // 1. FirestoreDirectService — service account JWT, bypasses rules, no server needed
     try {
@@ -1118,6 +1168,78 @@ class RoleManagementService {
   // DRAW HISTORY
   // ════════════════════════════════════════════════════════════════
 
+  // ════════════════════════════════════════════════════════════════
+  // LIVE DRAW REAL-TIME SYNC
+  // ════════════════════════════════════════════════════════════════
+
+  static Future<void> publishLiveDrawEvent({
+    required String equbLevel,
+    required String winnerId,
+    required String winnerName,
+    required String winnerUniqueId,
+    required int drawNumber,
+  }) async {
+    final lvl = equbLevel.toLowerCase().replaceAll('equb_', '').trim();
+    final nowIso = _nowIso();
+    final payload = <String, dynamic>{
+      'equbLevel': lvl,
+      'level': lvl,
+      'winnerId': winnerId,
+      'winnerName': winnerName,
+      'winnerUniqueId': winnerUniqueId,
+      'drawNumber': drawNumber,
+      'timestamp': nowIso,
+      'spinId': 'spin_${DateTime.now().millisecondsSinceEpoch}',
+      'status': 'completed',
+    };
+
+    try {
+      await FirestoreDirectService.updateDocument('live_draws', 'live_$lvl', payload);
+      debugPrint('[publishLiveDrawEvent] FirestoreDirect live_$lvl published: $payload');
+    } catch (e) {
+      debugPrint('[publishLiveDrawEvent] error: $e');
+    }
+
+    try {
+      final db = _maybeDb;
+      if (db != null) {
+        await db.collection('live_draws').doc('live_$lvl').set({
+          ...payload,
+          'serverTimestamp': FieldValue.serverTimestamp(),
+        }, SetOptions(merge: true));
+      }
+    } catch (_) {}
+  }
+
+  static Future<Map<String, dynamic>?> getLatestLiveDraw(String level) async {
+    final lvl = level.toLowerCase().replaceAll('equb_', '').trim();
+    try {
+      final token = await FirestoreDirectService.getAdminToken();
+      if (token != null) {
+        final doc = await FirestoreDirectService.getDocument(
+          'https://firestore.googleapis.com/v1/projects/online-equb-managment-sy-b5517/databases/(default)/documents/live_draws/live_$lvl',
+          token,
+        );
+        if (doc != null && doc['fields'] != null) {
+          final fields = FirestoreDirectService.parseDocFields(doc['fields'] as Map<String, dynamic>);
+          return fields;
+        }
+      }
+    } catch (e) {
+      debugPrint('[getLatestLiveDraw] FirestoreDirect error: $e');
+    }
+
+    try {
+      final db = _maybeDb;
+      if (db != null) {
+        final doc = await db.collection('live_draws').doc('live_$lvl').get();
+        if (doc.exists) return doc.data();
+      }
+    } catch (_) {}
+
+    return null;
+  }
+
   static Future<Map<String, dynamic>> saveDrawResult({
     required String equbLevel,
     required String adminId,
@@ -1142,6 +1264,15 @@ class RoleManagementService {
     };
     String? firestoreDocId;
 
+    // Publish live draw event for real-time frontend user sync
+    publishLiveDrawEvent(
+      equbLevel: equbLevel,
+      winnerId: winnerId,
+      winnerName: winnerName,
+      winnerUniqueId: winnerUniqueId,
+      drawNumber: drawNumber,
+    );
+
     // ── 1. FirestoreDirectService — service account JWT, bypasses rules ─────
     // PRIMARY: This is the only path that reliably works on real Android phone.
     try {
@@ -1164,10 +1295,46 @@ class RoleManagementService {
           },
         );
         debugPrint('[saveDrawResult] FirestoreDirect winner marked hasWon=true: $ok');
+
+        if (!ok || winnerUniqueId.isNotEmpty) {
+          try {
+            final users = await FirestoreDirectService.getUsersByLevel(equbLevel);
+            for (final u in users) {
+              final uid = (u['userId'] ?? u['id'] ?? '').toString();
+              final uUnique = (u['uniqueId'] ?? '').toString();
+              if (uid == winnerId || (winnerUniqueId.isNotEmpty && uUnique == winnerUniqueId)) {
+                await FirestoreDirectService.updateDocument(
+                  'users', uid,
+                  {
+                    'hasWon':      true,
+                    'status':      'selected',
+                    'lastWinDate': nowIso,
+                    'updatedAt':   nowIso,
+                  },
+                );
+              }
+            }
+          } catch (_) {}
+        }
       }
     } catch (e) {
       debugPrint('[saveDrawResult] FirestoreDirect error: $e');
     }
+
+    // ── Update offline cache so winner is excluded locally ───────────────────
+    try {
+      final cached = await OfflineService.getCachedUsers(equbLevel);
+      for (final u in cached) {
+        final id = (u['userId'] ?? u['id'] ?? '').toString();
+        final uUnique = (u['uniqueId'] ?? '').toString();
+        if (id == winnerId || (winnerUniqueId.isNotEmpty && uUnique == winnerUniqueId)) {
+          u['hasWon'] = true;
+          u['status'] = 'selected';
+          u['lastWinDate'] = nowIso;
+        }
+      }
+      await OfflineService.cacheUsers(equbLevel, cached);
+    } catch (_) {}
 
     // ── 2. Firestore SDK fallback (when rules are open / emulator) ───────────
     if (firestoreDocId == null) {
@@ -1216,6 +1383,23 @@ class RoleManagementService {
     final targetLevel = level.toLowerCase().replaceAll('equb_', '').trim();
     final List<Map<String, dynamic>> rawList = [];
     final Set<String> seenKeys = {};
+
+    // 0. Firestore SDK on Web (PRIMARY for Web deployment)
+    if (kIsWeb) {
+      try {
+        final db = _maybeDb;
+        if (db != null) {
+          for (final field in ['equbLevel', 'level']) {
+            final snap = await db.collection('draws')
+                .where(field, isEqualTo: targetLevel)
+                .get();
+            for (final doc in snap.docs) rawList.add({...doc.data(), 'drawId': doc.id});
+            if (rawList.isNotEmpty) break;
+          }
+          if (rawList.isNotEmpty) return rawList;
+        }
+      } catch (e) { debugPrint('[getDrawHistory Web Firestore] $e'); }
+    }
 
     // 1. FirestoreDirectService — service account JWT, bypasses rules
     try {
@@ -1312,9 +1496,9 @@ class RoleManagementService {
         // Delete the draw document
         final token = await FirestoreDirectService.getAdminToken();
         if (token != null) {
-          final url = 'https://firestore.googleapis.com/v1/projects/online-equb-managment-system'
+          final url = 'https://firestore.googleapis.com/v1/projects/online-equb-managment-sy-b5517'
               '/databases/(default)/documents/draws/$drawId';
-          final resp = await (await _httpDeleteCall(url, token));
+          final resp = await _httpDeleteCall(url, token);
           if (resp == 200 || resp == 204) {
             deleted = true;
             debugPrint('[deleteDrawHistory] FirestoreDirect delete draw OK');
@@ -1440,6 +1624,32 @@ class RoleManagementService {
   static Future<List<Map<String, dynamic>>> getPaymentsByLevel(
       String level) async {
     final targetLevel = level.toLowerCase().replaceAll('equb_', '').trim();
+
+    // 0. Firestore SDK on Web (PRIMARY for Web deployment)
+    if (kIsWeb) {
+      try {
+        final db = _maybeDb;
+        if (db != null) {
+          final List<Map<String, dynamic>> list = [];
+          final Set<String> seen = {};
+          for (final field in ['equbLevel', 'level']) {
+            final snap = await db.collection('payments')
+                .where(field, isEqualTo: targetLevel)
+                .get();
+            for (final d in snap.docs) {
+              if (seen.contains(d.id)) continue;
+              seen.add(d.id);
+              list.add({'paymentId': d.id, 'id': d.id, ...d.data()});
+            }
+          }
+          if (list.isNotEmpty) {
+            list.sort((a, b) => (b['createdAt']?.toString() ?? '').compareTo(a['createdAt']?.toString() ?? ''));
+            await OfflineService.cachePayments(targetLevel, list);
+            return list;
+          }
+        }
+      } catch (e) { debugPrint('[getPaymentsByLevel Web Firestore] $e'); }
+    }
 
     // 1. FirestoreDirectService — service account JWT, bypasses rules
     try {

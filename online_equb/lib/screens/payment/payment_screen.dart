@@ -248,7 +248,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
       final token = await FirestoreDirectService.getAdminToken();
       if (token != null) {
         final url = 'https://firestore.googleapis.com/v1/projects/'
-            'online-equb-managment-system/databases/(default)/documents/'
+            'online-equb-managment-sy-b5517/databases/(default)/documents/'
             'equb_payment_accounts/$_selectedLevel';
         final resp = await FirestoreDirectService.getDocument(url, token);
         if (resp != null && resp['fields'] != null) {

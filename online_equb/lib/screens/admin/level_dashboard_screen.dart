@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -91,9 +92,20 @@ class _LevelDashboardScreenState extends State<LevelDashboardScreen> {
   int get _maxSlots =>
       int.tryParse(widget.data['maxParticipants']?.toString() ?? '') ?? 100;
 
+  bool _isWinner(Map<String, dynamic> p) {
+    final hw = p['hasWon'];
+    if (hw == true || hw == 'true' || hw == 1) return true;
+    final st = (p['status'] ?? '').toString().toLowerCase();
+    if (st == 'selected' || st == 'won' || st == 'winner') return true;
+    return false;
+  }
+
   List<Map<String, dynamic>> get _eligible => _participants
-      .where(
-          (p) => p['hasWon'] != true && (p['status'] ?? 'active') == 'active')
+      .where((p) {
+        if (_isWinner(p)) return false;
+        final st = (p['status'] ?? 'active').toString().toLowerCase();
+        return st == 'active';
+      })
       .toList();
 
   List<Map<String, dynamic>> _levelPayments = [];
@@ -167,6 +179,7 @@ class _LevelDashboardScreenState extends State<LevelDashboardScreen> {
   bool _obscureSettingsPass = true;
 
   late int _currentNavIndex;
+  Timer? _autoSyncTimer;
 
   @override
   void initState() {
@@ -186,10 +199,17 @@ class _LevelDashboardScreenState extends State<LevelDashboardScreen> {
     _settingsAddressController = TextEditingController(
         text: widget.data['address'] ?? '');
     _loadData();
+    // Live background auto-sync across PC and Phone (every 4s)
+    _autoSyncTimer = Timer.periodic(const Duration(seconds: 4), (_) {
+      if (mounted && !_isSpinning && !_loading) {
+        _silentRefreshData();
+      }
+    });
   }
 
   @override
   void dispose() {
+    _autoSyncTimer?.cancel();
     _settingsNameController.dispose();
     _settingsEmailController.dispose();
     _settingsUsernameController.dispose();
@@ -198,6 +218,20 @@ class _LevelDashboardScreenState extends State<LevelDashboardScreen> {
     _settingsPhoneController.dispose();
     _settingsAddressController.dispose();
     super.dispose();
+  }
+
+  Future<void> _silentRefreshData() async {
+    try {
+      final users = await RoleManagementService.getUsersByLevel(widget.level);
+      final history = await RoleManagementService.getDrawHistory(widget.level);
+      final payments = await RoleManagementService.getPaymentsByLevel(widget.level);
+      if (!mounted || _isSpinning) return;
+      setState(() {
+        _participants = users;
+        _drawHistory = history;
+        _levelPayments = payments;
+      });
+    } catch (_) {}
   }
 
   Future<void> _loadData() async {
@@ -1228,7 +1262,8 @@ class _LevelDashboardScreenState extends State<LevelDashboardScreen> {
     // Mark winner in local participants list
     for (final p in _participants) {
       final pid = (p['userId'] ?? p['id'] ?? p['participantId'] ?? '').toString();
-      if (pid == winnerId) {
+      final puid = (p['uniqueId'] ?? '').toString();
+      if (pid == winnerId || (winnerUniqueId.isNotEmpty && puid == winnerUniqueId)) {
         p['hasWon'] = true;
         p['status'] = 'selected';
         p['selectedAt'] = now;

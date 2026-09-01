@@ -425,13 +425,14 @@ class _HomeScreenState extends State<HomeScreen>
     return Shimmer.fromColors(
       baseColor: Colors.grey.shade300,
       highlightColor: Colors.grey.shade100,
-      child: Padding(
+      child: SingleChildScrollView(
+        physics: const NeverScrollableScrollPhysics(),
         padding: const EdgeInsets.all(16),
         child: Column(
           children: List.generate(
             4,
             (i) => Container(
-              height: i == 0 ? 200 : 110,
+              height: i == 0 ? 180 : 100,
               margin: const EdgeInsets.only(bottom: 14),
               decoration: BoxDecoration(
                 color: Colors.white,

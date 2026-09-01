@@ -1,9 +1,13 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import '../../config/theme.dart';
 import '../../services/api_service.dart';
 import '../../services/firestore_service.dart';
+import '../../services/role_management_service.dart';
+import '../../services/firestore_direct_service.dart';
 import '../../utils/constants.dart';
+import '../../widgets/equb_draw_wheel.dart';
 import '../payment/payment_screen.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -21,21 +25,36 @@ class _EqubDetailScreenState extends State<EqubDetailScreen>
     with TickerProviderStateMixin {
   Map<String, dynamic>? _equb;
   List<dynamic> _draws = [];
+  List<Map<String, dynamic>> _participants = [];
   bool _loading = true;
   late TabController _tabController;
+  Timer? _syncTimer;
+  String? _lastSpinId;
+  final GlobalKey _wheelKey = GlobalKey();
 
   @override
   void initState() {
     super.initState();
-    // TabController uses THIS vsync (TickerProviderStateMixin supports multiple)
-    _tabController = TabController(length: 2, vsync: this);
+    // 3 Tabs: Details, Live Wheel Algorithm, Draw History
+    _tabController = TabController(length: 3, vsync: this);
     _load();
+    _startLiveSyncTimer();
   }
 
   @override
   void dispose() {
+    _syncTimer?.cancel();
     _tabController.dispose();
     super.dispose();
+  }
+
+  void _startLiveSyncTimer() {
+    _syncTimer?.cancel();
+    _syncTimer = Timer.periodic(const Duration(seconds: 3), (_) {
+      if (mounted && _equb != null) {
+        _syncLiveData();
+      }
+    });
   }
 
   Future<void> _load() async {
@@ -46,20 +65,102 @@ class _EqubDetailScreenState extends State<EqubDetailScreen>
       try {
         equb = await FirestoreService.getEqubById(widget.equbId);
       } catch (_) {}
+
+      final lvl = (equb?['level'] ?? widget.equbId).toString().replaceAll('equb_', '').toLowerCase();
+      try {
+        final users = await RoleManagementService.getUsersByLevel(lvl);
+        if (mounted) _participants = users;
+      } catch (_) {}
+
       try {
         final d = await ApiService.getEqubDraws(widget.equbId);
         if (mounted) _draws = d;
       } catch (_) {}
+
       if (equb == null) {
         try {
           equb = await ApiService.getEqub(widget.equbId);
         } catch (_) {}
       }
       equb ??= _fallback(widget.equbId);
-      if (mounted) setState(() { _equb = equb; _loading = false; });
+      if (mounted) {
+        setState(() {
+          _equb = equb;
+          _loading = false;
+        });
+      }
     } catch (_) {
       if (mounted) setState(() => _loading = false);
     }
+  }
+
+  Future<void> _syncLiveData() async {
+    final lvl = _lvl;
+    if (lvl.isEmpty) return;
+
+    try {
+      final users = await RoleManagementService.getUsersByLevel(lvl);
+      final draws = await RoleManagementService.getDrawHistory(lvl);
+      final liveDraw = await RoleManagementService.getLatestLiveDraw(lvl);
+
+      if (!mounted) return;
+
+      setState(() {
+        _participants = users;
+        _draws = draws;
+        if (_equb != null) {
+          _equb!['currentParticipants'] = users.length;
+        }
+      });
+
+      // Handle live spin event from admin
+      if (liveDraw != null && liveDraw.isNotEmpty) {
+        final spinId = (liveDraw['spinId'] ?? '').toString();
+        if (spinId.isNotEmpty && spinId != _lastSpinId) {
+          final timestampStr = (liveDraw['timestamp'] ?? '').toString();
+          if (timestampStr.isNotEmpty) {
+            final dt = DateTime.tryParse(timestampStr);
+            if (dt != null && DateTime.now().difference(dt).inMinutes < 5) {
+              _lastSpinId = spinId;
+              // Auto switch to Wheel tab if not already on it
+              if (_tabController.index != 1) {
+                _tabController.animateTo(1);
+              }
+              // Trigger wheel spin to the target winner
+              final winnerId = (liveDraw['winnerId'] ?? '').toString();
+              final winnerUniqueId = (liveDraw['winnerUniqueId'] ?? '').toString();
+
+              final eligible = users.where((u) {
+                final hw = u['hasWon'];
+                final st = (u['status'] ?? '').toString().toLowerCase();
+                return !(hw == true || hw == 'true' || st == 'selected' || st == 'won');
+              }).toList();
+
+              int targetIdx = eligible.indexWhere((u) {
+                final id = (u['userId'] ?? u['id'] ?? '').toString();
+                final uq = (u['uniqueId'] ?? '').toString();
+                return (id.isNotEmpty && id == winnerId) ||
+                       (uq.isNotEmpty && uq == winnerUniqueId);
+              });
+
+              if (targetIdx < 0) targetIdx = 0;
+
+              // Invoke spin on EqubDrawWheel widget state
+              final dynamic wheelState = _wheelKey.currentState;
+              if (wheelState != null) {
+                try {
+                  wheelState.spinToTargetIndex(targetIdx, precalculatedWinner: {
+                    'id': winnerId,
+                    'fullName': liveDraw['winnerName'] ?? 'Winner',
+                    'uniqueId': winnerUniqueId,
+                  });
+                } catch (_) {}
+              }
+            }
+          }
+        }
+      }
+    } catch (_) {}
   }
 
   // Fallback data when no server/Firestore data available
@@ -108,24 +209,24 @@ class _EqubDetailScreenState extends State<EqubDetailScreen>
     'medium' => const [
       _BPhrase('Medium Level Equb',               'መካከለኛ ደረጃ እቁብ'),
       _BPhrase('6,000 – 10,000 ETB Per Week',     '6,000 – 10,000 ብር ሳምንታዊ ክፍያ'),
-      _BPhrase('Net Prize up to 990,000 ETB',     'ድል አበል እስከ 990,000 ብር'),
+      _BPhrase('Net Prize up to 930,000 ETB',     'ድል አበል እስከ 930,000 ብር'),
       _BPhrase('Fair Wheel Draw • Verified',      'ፍትሃዊ ዕጣ • ሁሉም ውሂብ ተጠብቋል'),
     ],
     'high' => const [
       _BPhrase('High Level Equb',                 'ከፍተኛ ደረጃ እቁብ'),
       _BPhrase('11,000 – 20,000 ETB Per Week',    '11,000 – 20,000 ብር ሳምንታዊ'),
-      _BPhrase('Net Prize up to 1,980,000 ETB',   'ድል አበል እስከ 1,980,000 ብር'),
+      _BPhrase('Net Prize up to 1,800,000 ETB',   'ድል አበል እስከ 1,800,000 ብር'),
       _BPhrase('VIP Pool • Secured • Verified',   'ቪአይፒ • ደህንነቱ ያለ • ተረጋግጧል'),
     ],
     _ => const [
       _BPhrase('Low Level Equb',                  'ዝቅተኛ ደረጃ እቁብ'),
       _BPhrase('1,000 – 5,000 ETB Per Week',      '1,000 – 5,000 ብር ሳምንታዊ ክፍያ'),
-      _BPhrase('Net Prize up to 495,000 ETB',     'ድል አበል እስከ 495,000 ብር'),
+      _BPhrase('Net Prize up to 465,000 ETB',     'ድል አበል እስከ 465,000 ብር'),
       _BPhrase('Fair Draw • 1-to-1 Verified',     'ፍትሃዊ ዕጣ • 1-ለ-1 ማረጋገጫ'),
     ],
   };
 
-  // ── Back navigation — works from any context ──────────────────────────────
+  // ── Back navigation ───────────────────────────────────────────────────────
   void _goBack() {
     if (Navigator.of(context).canPop()) {
       Navigator.of(context).pop();
@@ -193,21 +294,20 @@ class _EqubDetailScreenState extends State<EqubDetailScreen>
     final price   = ((_equb!['price']    as num?)?.toDouble()) ?? 0;
     final prize   = ((_equb!['netPrize'] as num?)?.toDouble()) ?? 0;
     final fee     = ((_equb!['adminFee'] as num?)?.toDouble()) ?? 0;
-    final current = ((_equb!['currentParticipants'] as num?)?.toInt()) ?? 0;
+    final current = _participants.length > 0 ? _participants.length : (((_equb!['currentParticipants'] as num?)?.toInt()) ?? 0);
     final max     = ((_equb!['maxParticipants'] as num?)?.toInt()) ?? 100;
 
     return Scaffold(
       backgroundColor: const Color(0xFFF0F4FF),
-      // Use Scaffold appBar so back navigation always works correctly
       appBar: PreferredSize(
         preferredSize: const Size.fromHeight(0),
         child: AppBar(backgroundColor: _dark, elevation: 0),
       ),
       body: Column(
         children: [
-          // ── Hero banner — fixed height, image contained properly ──────
+          // ── Hero banner ──────────────────────────────────────────────────
           _HeroSection(
-            vsync: this, // pass vsync from parent — avoids double-ticker crash
+            vsync: this,
             img: _img,
             color: _color,
             dark: _dark,
@@ -217,37 +317,44 @@ class _EqubDetailScreenState extends State<EqubDetailScreen>
             onBack: _goBack,
           ),
 
-          // ── Tab selector ──────────────────────────────────────────────
+          // ── Tab selector ─────────────────────────────────────────────────
           Material(
             color: Colors.white,
-            elevation: 1,
+            elevation: 2,
             child: TabBar(
               controller: _tabController,
               labelColor: _color,
               unselectedLabelColor: AppColors.textSecondary,
               indicatorColor: _color,
               indicatorWeight: 3,
-              labelStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+              labelStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
               tabs: [
                 Tab(
                   child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
                     const Icon(Icons.info_outline_rounded, size: 15),
-                    const SizedBox(width: 5),
+                    const SizedBox(width: 4),
                     Text(isAmharic ? 'ዝርዝር' : 'Details'),
                   ]),
                 ),
                 Tab(
                   child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                    const Icon(Icons.motion_photos_on_rounded, size: 15),
+                    const SizedBox(width: 4),
+                    Text(isAmharic ? 'ዕጣ መንኮራኩር' : 'Draw Circle'),
+                  ]),
+                ),
+                Tab(
+                  child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
                     const Icon(Icons.emoji_events_outlined, size: 15),
-                    const SizedBox(width: 5),
-                    Text(isAmharic ? 'ዕጣ ታሪክ' : 'Draw History'),
+                    const SizedBox(width: 4),
+                    Text(isAmharic ? 'ዕጣ ታሪክ' : 'History'),
                   ]),
                 ),
               ],
             ),
           ),
 
-          // ── Tab body ──────────────────────────────────────────────────
+          // ── Tab body ─────────────────────────────────────────────────────
           Expanded(
             child: TabBarView(
               controller: _tabController,
@@ -273,7 +380,15 @@ class _EqubDetailScreenState extends State<EqubDetailScreen>
                     ),
                   ),
                 ),
-                // Tab 1 — Draw History
+                // Tab 1 — Live Draw Wheel Circle Algorithm
+                _LiveWheelTab(
+                  key: _wheelKey,
+                  participants: _participants,
+                  levelName: isAmharic ? _amLabel : _enLabel,
+                  color: _color,
+                  isAmharic: isAmharic,
+                ),
+                // Tab 2 — Winner History
                 _DrawHistoryTab(
                   draws: _draws,
                   max: max,
@@ -299,8 +414,6 @@ class _BPhrase {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // _HeroSection
-// Fixed height (160px), image fills with BoxFit.cover, text centred,
-// back arrow always works.  Vsync passed from parent so no double-ticker.
 // ─────────────────────────────────────────────────────────────────────────────
 class _HeroSection extends StatefulWidget {
   final TickerProvider vsync;
@@ -333,7 +446,6 @@ class _HeroSectionState extends State<_HeroSection> {
   @override
   void initState() {
     super.initState();
-    // Use the vsync from the parent — no independent ticker
     _ctrl = AnimationController(
       vsync: widget.vsync,
       duration: const Duration(milliseconds: 550),
@@ -364,9 +476,8 @@ class _HeroSectionState extends State<_HeroSection> {
   @override
   Widget build(BuildContext context) {
     final phrase = widget.phrases[_idx];
-    // Amharic always top (main), English always bottom (sub)
-    final mainText = phrase.am;  // Amharic — primary, bold
-    final subText  = phrase.en;  // English — secondary
+    final mainText = phrase.am;
+    final subText  = phrase.en;
 
     return SizedBox(
       height: 160,
@@ -374,7 +485,6 @@ class _HeroSectionState extends State<_HeroSection> {
       child: Stack(
         fit: StackFit.expand,
         children: [
-          // ── Pure gradient background — no image ──────────────────────
           Container(
             decoration: BoxDecoration(
               gradient: LinearGradient(
@@ -385,7 +495,6 @@ class _HeroSectionState extends State<_HeroSection> {
               ),
             ),
           ),
-          // Decorative circles
           Positioned(right: -20, top: -20,
             child: Container(width: 110, height: 110,
               decoration: BoxDecoration(shape: BoxShape.circle,
@@ -395,8 +504,6 @@ class _HeroSectionState extends State<_HeroSection> {
               decoration: BoxDecoration(shape: BoxShape.circle,
                 color: Colors.white.withOpacity(0.06)))),
 
-
-          // ── Back button — always functional ──────────────────────────
           Positioned(
             top: 8,
             left: 4,
@@ -424,7 +531,6 @@ class _HeroSectionState extends State<_HeroSection> {
             ),
           ),
 
-          // ── Centred animated text ────────────────────────────────────
           Center(
             child: Padding(
               padding: const EdgeInsets.fromLTRB(56, 0, 56, 20),
@@ -433,11 +539,8 @@ class _HeroSectionState extends State<_HeroSection> {
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    // Emoji
-                    Text(widget.emoji,
-                        style: const TextStyle(fontSize: 28)),
+                    Text(widget.emoji, style: const TextStyle(fontSize: 28)),
                     const SizedBox(height: 4),
-                    // Level name — large bold
                     Text(
                       widget.levelLabel,
                       textAlign: TextAlign.center,
@@ -450,7 +553,6 @@ class _HeroSectionState extends State<_HeroSection> {
                       ),
                     ),
                     const SizedBox(height: 4),
-                    // Amharic text — primary, large, very bold
                     Text(
                       mainText,
                       textAlign: TextAlign.center,
@@ -466,7 +568,6 @@ class _HeroSectionState extends State<_HeroSection> {
                       overflow: TextOverflow.ellipsis,
                     ),
                     const SizedBox(height: 5),
-                    // English text — secondary, smaller
                     Text(
                       subText,
                       textAlign: TextAlign.center,
@@ -485,7 +586,6 @@ class _HeroSectionState extends State<_HeroSection> {
             ),
           ),
 
-          // ── Dot indicators — bottom centre ───────────────────────────
           Positioned(
             bottom: 8,
             left: 0,
@@ -516,7 +616,261 @@ class _HeroSectionState extends State<_HeroSection> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// _DetailsTab — flat clean info, no box containers
+// _LiveWheelTab — Frontend Live Wheel Circle Tab
+// ─────────────────────────────────────────────────────────────────────────────
+class _LiveWheelTab extends StatefulWidget {
+  final List<Map<String, dynamic>> participants;
+  final String levelName;
+  final Color color;
+  final bool isAmharic;
+
+  const _LiveWheelTab({
+    super.key,
+    required this.participants,
+    required this.levelName,
+    required this.color,
+    required this.isAmharic,
+  });
+
+  @override
+  State<_LiveWheelTab> createState() => _LiveWheelTabState();
+}
+
+class _LiveWheelTabState extends State<_LiveWheelTab> {
+  final GlobalKey _wheelWidgetKey = GlobalKey();
+
+  void spinToTargetIndex(int idx, {Map<String, dynamic>? precalculatedWinner}) {
+    final dynamic st = _wheelWidgetKey.currentState;
+    if (st != null) {
+      try {
+        st.spinToTargetIndex(idx, precalculatedWinner: precalculatedWinner);
+      } catch (_) {}
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isAmharic = widget.isAmharic;
+    final eligible = widget.participants.where((p) {
+      final hw = p['hasWon'];
+      final st = (p['status'] ?? 'active').toString().toLowerCase();
+      return !(hw == true || hw == 'true' || hw == 1 || st == 'selected' || st == 'won');
+    }).toList();
+
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        children: [
+          // ── Live Stream Sync Header Badge ──────────────────────────────
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            decoration: BoxDecoration(
+              color: Colors.red.shade50,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: Colors.red.shade200),
+            ),
+            child: Row(
+              children: [
+                Container(
+                  width: 10,
+                  height: 10,
+                  decoration: const BoxDecoration(
+                    color: Colors.red,
+                    shape: BoxShape.circle,
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    isAmharic
+                        ? '🔴 ቀጥታ ዥረት የተያያዘ — አስተዳዳሪ ሲያዞር በራስ-ሰር ይዞራል'
+                        : '🔴 LIVE DRAW SYNC — Auto spins when admin triggers draw',
+                    style: TextStyle(
+                      color: Colors.red.shade900,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 12,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          const SizedBox(height: 14),
+
+          // ── Registered Users Count Chips ────────────────────────────────
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+            children: [
+              _chip(
+                Icons.people_alt_rounded,
+                isAmharic ? 'የተመዘገቡ' : 'Registered',
+                '${widget.participants.length}',
+                AppColors.primary,
+              ),
+              _chip(
+                Icons.casino_rounded,
+                isAmharic ? 'ተወዳዳሪ' : 'Eligible',
+                '${eligible.length}',
+                Colors.green.shade700,
+              ),
+              _chip(
+                Icons.emoji_events_rounded,
+                isAmharic ? 'ያሸነፉ' : 'Winners',
+                '${widget.participants.length - eligible.length}',
+                Colors.amber.shade800,
+              ),
+            ],
+          ),
+
+          const SizedBox(height: 20),
+
+          // ── Equb Draw Wheel Circle Component ─────────────────────────────
+          EqubDrawWheel(
+            key: _wheelWidgetKey,
+            participants: widget.participants,
+            accentColor: widget.color,
+            levelName: widget.levelName,
+            disabled: true, // Disables manual spin button on user frontend (Admin control only)
+            onWinnerSelected: (idx) {
+              // Action handled on winner select
+            },
+          ),
+
+          const SizedBox(height: 24),
+
+          // ── Registered Circle Members List Title ─────────────────────────
+          Row(
+            children: [
+              Container(width: 4, height: 18,
+                  decoration: BoxDecoration(color: widget.color,
+                      borderRadius: BorderRadius.circular(2))),
+              const SizedBox(width: 8),
+              Text(
+                isAmharic ? 'በመንኮራኩሩ ላይ ያሉ አባላት' : 'Registered Members on Wheel',
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 15,
+                  color: widget.color,
+                ),
+              ),
+            ],
+          ),
+
+          const SizedBox(height: 12),
+
+          if (widget.participants.isEmpty)
+            Padding(
+              padding: const EdgeInsets.all(24),
+              child: Text(
+                isAmharic ? 'እስካሁን የተመዘገበ አባል የለም።' : 'No registered participants yet.',
+                style: const TextStyle(color: AppColors.textSecondary, fontSize: 13),
+              ),
+            )
+          else
+            ListView.builder(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              itemCount: widget.participants.length,
+              itemBuilder: (ctx, i) {
+                final p = widget.participants[i];
+                final name = (p['fullName'] ?? p['firstName'] ?? p['username'] ?? 'Member').toString();
+                final uid = (p['uniqueId'] ?? p['userId'] ?? p['id'] ?? '').toString();
+                final phone = (p['phoneNumber'] ?? p['phone'] ?? '').toString();
+                final hw = p['hasWon'];
+                final st = (p['status'] ?? 'active').toString().toLowerCase();
+                final hasWon = (hw == true || hw == 'true' || hw == 1 || st == 'selected' || st == 'won');
+
+                return Container(
+                  margin: const EdgeInsets.only(bottom: 8),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                      color: hasWon ? Colors.amber.shade300 : AppColors.divider,
+                    ),
+                  ),
+                  child: ListTile(
+                    dense: true,
+                    leading: CircleAvatar(
+                      backgroundColor: hasWon ? Colors.amber.shade100 : widget.color.withOpacity(0.12),
+                      child: Text(
+                        '${i + 1}',
+                        style: TextStyle(
+                          color: hasWon ? Colors.amber.shade900 : widget.color,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ),
+                    title: Text(
+                      name,
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 13,
+                        decoration: hasWon ? TextDecoration.lineThrough : null,
+                      ),
+                    ),
+                    subtitle: Text(
+                      'ID: $uid ${phone.isNotEmpty ? "• $phone" : ""}',
+                      style: const TextStyle(fontSize: 11, color: AppColors.textSecondary),
+                    ),
+                    trailing: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: hasWon ? Colors.amber.shade50 : Colors.green.shade50,
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                          color: hasWon ? Colors.amber.shade300 : Colors.green.shade300,
+                        ),
+                      ),
+                      child: Text(
+                        hasWon
+                            ? (isAmharic ? '🏆 አሸናፊ' : '🏆 Winner')
+                            : (isAmharic ? '✅ ተወዳዳሪ' : '✅ Eligible'),
+                        style: TextStyle(
+                          fontSize: 10,
+                          fontWeight: FontWeight.bold,
+                          color: hasWon ? Colors.amber.shade900 : Colors.green.shade800,
+                        ),
+                      ),
+                    ),
+                  ),
+                );
+              },
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _chip(IconData icon, String label, String val, Color c) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: c.withOpacity(0.08),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: c.withOpacity(0.2)),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, size: 16, color: c),
+          const SizedBox(width: 6),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(val, style: TextStyle(fontWeight: FontWeight.w900, fontSize: 13, color: c)),
+              Text(label, style: const TextStyle(fontSize: 10, color: AppColors.textSecondary)),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// _DetailsTab
 // ─────────────────────────────────────────────────────────────────────────────
 class _DetailsTab extends StatelessWidget {
   final Map<String, dynamic> equb;
@@ -548,7 +902,6 @@ class _DetailsTab extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
 
-          // ── Stats row ─────────────────────────────────────────────────
           Row(children: [
             _stat(Icons.payments_rounded,
                 isAmharic ? 'ሳምንታዊ ክፍያ' : 'Weekly Entry',
@@ -565,7 +918,6 @@ class _DetailsTab extends StatelessWidget {
 
           const SizedBox(height: 18),
 
-          // ── Participant progress ──────────────────────────────────────
           Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
             Text(isAmharic ? 'ተሳታፊዎች' : 'Participants',
                 style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
@@ -674,7 +1026,6 @@ class _DetailsTab extends StatelessWidget {
 
           const SizedBox(height: 28),
 
-          // ── CTA ───────────────────────────────────────────────────────
           SizedBox(
             width: double.infinity,
             height: 56,
@@ -865,9 +1216,9 @@ class _DrawHistoryTab extends StatelessWidget {
               final name  = d['winnerName']  as String? ?? '—';
               final phone = d['winnerPhone'] as String? ?? '';
               final prz   = (d['prizeAmount'] as num?)?.toDouble() ?? 0;
-              final date  = d['drawDate'] as String? ?? '';
+              final date  = d['drawDate'] as String? ?? d['createdAt'] as String? ?? '';
               final remaining = max - drawNum;
-              final isLatest  = i == draws.length - 1;
+              final isLatest  = i == 0;
 
               return Container(
                 margin: const EdgeInsets.only(bottom: 10),

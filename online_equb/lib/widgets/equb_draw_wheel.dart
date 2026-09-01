@@ -65,7 +65,7 @@ class _EqubDrawWheelState extends State<EqubDrawWheel>
     super.initState();
     _rotationController = AnimationController(
       vsync: this,
-      duration: const Duration(seconds: 7),
+      duration: const Duration(seconds: 14),
     );
     _confettiController = ConfettiController(duration: const Duration(seconds: 6));
     SoundService.init();
@@ -81,11 +81,21 @@ class _EqubDrawWheelState extends State<EqubDrawWheel>
 
   // ── helpers ───────────────────────────────────────────────────────────────
 
+  bool _isWinner(Map<String, dynamic> p) {
+    final hw = p['hasWon'];
+    if (hw == true || hw == 'true' || hw == 1) return true;
+    final st = (p['status'] ?? '').toString().toLowerCase();
+    if (st == 'selected' || st == 'won' || st == 'winner') return true;
+    return false;
+  }
+
   /// Eligible = active and has NOT won before
   List<Map<String, dynamic>> get _eligible => widget.participants
-      .where((p) =>
-          p['hasWon'] != true &&
-          (p['status'] ?? 'active').toString().toLowerCase() == 'active')
+      .where((p) {
+        if (_isWinner(p)) return false;
+        final st = (p['status'] ?? 'active').toString().toLowerCase();
+        return st == 'active';
+      })
       .toList();
 
   static String _pid(Map<String, dynamic> p) =>
@@ -103,38 +113,27 @@ class _EqubDrawWheelState extends State<EqubDrawWheel>
 
   // ── SPIN ──────────────────────────────────────────────────────────────────
 
-  Future<void> _spin() async {
+  // ── SPIN ──────────────────────────────────────────────────────────────────
+
+  /// Public method to spin the wheel externally (for real-time admin sync or direct target)
+  Future<void> spinToTargetIndex(int targetVisualIndex, {Map<String, dynamic>? precalculatedWinner}) async {
     final eligible = _eligible;
-    if (_spinning || widget.disabled || eligible.isEmpty) return;
+    if (_spinning || eligible.isEmpty) return;
 
     // ── Start Amharic/English spinning announcement immediately ──────────
     SoundService.speakSpinningAnnouncement(levelName: widget.levelName);
 
     setState(() { _spinning = true; _winner = null; });
 
-    // ── Ask parent for winner index ──────────────────────────────────────
-    // Parent uses EqubDrawAlgorithm.chooseWinnerIndex which does
-    // free random selection from eligible-only list.
-    final targetFullIndex = await widget.onSpinRequested?.call();
+    int targetVisual = (targetVisualIndex >= 0 && targetVisualIndex < eligible.length)
+        ? targetVisualIndex
+        : _rng.nextInt(eligible.length);
 
-    // ── Map to visual slot in eligible list ──────────────────────────────
-    int targetVisual;
-    if (targetFullIndex != null &&
-        targetFullIndex >= 0 &&
-        targetFullIndex < widget.participants.length) {
-      final tPid = _pid(widget.participants[targetFullIndex]);
-      final vi   = eligible.indexWhere((p) => _pid(p) == tPid);
-      targetVisual = vi >= 0 ? vi : _rng.nextInt(eligible.length);
-    } else {
-      targetVisual = _rng.nextInt(eligible.length);
-    }
-
-    // ── Compute end angle ─────────────────────────────────────────────────
     final count      = eligible.length;
     final sliceAngle = (2 * pi) / count;
     final sliceCentre  = (targetVisual + 0.5) * sliceAngle;
     final targetAngle  = (3 * pi / 2) - sliceCentre;
-    final turns = 8 + _rng.nextInt(5); // 8–12 full rotations
+    final turns = 18 + _rng.nextInt(8); // 18–26 full rotations for dramatic spin effect
     final norm  = _currentAngle % (2 * pi);
     final delta = (targetAngle - norm + 2 * pi) % (2 * pi);
     final endAngle = _currentAngle + turns * 2 * pi + delta;
@@ -166,7 +165,7 @@ class _EqubDrawWheelState extends State<EqubDrawWheel>
 
     if (!mounted) return;
 
-    final selected = eligible[targetVisual];
+    final selected = precalculatedWinner ?? eligible[targetVisual];
     setState(() {
       _currentAngle = endAngle % (2 * pi);
       _winner  = selected;
@@ -176,11 +175,36 @@ class _EqubDrawWheelState extends State<EqubDrawWheel>
     _confettiController.play();
     SoundService.playTickSound();
 
-    // ── Notify parent (level_dashboard_screen persists winner) ──────────
-    final origIdx = widget.participants.indexWhere(
-        (p) => _pid(p) == _pid(selected));
-    widget.onWinnerSelected
-        ?.call(origIdx >= 0 ? origIdx : targetFullIndex ?? 0);
+    final winnerName = (selected['fullName'] ?? selected['name'] ?? selected['firstName'] ?? 'Winner').toString();
+    final winnerUniqueId = (selected['uniqueId'] ?? selected['userId'] ?? selected['id'] ?? '').toString();
+    SoundService.speakWinnerAnnouncement(
+      fullName: winnerName,
+      uniqueId: winnerUniqueId,
+      levelName: widget.levelName,
+    );
+
+    // ── Notify parent with the eligible list index ───────────────────────
+    widget.onWinnerSelected?.call(targetVisual);
+  }
+
+  Future<void> _spin() async {
+    final eligible = _eligible;
+    if (_spinning || widget.disabled || eligible.isEmpty) return;
+
+    // ── Ask parent for winner index inside eligible list ─────────────────
+    final targetEligibleIndex = await widget.onSpinRequested?.call();
+
+    // ── Map to visual slot in eligible list ──────────────────────────────
+    int targetVisual;
+    if (targetEligibleIndex != null &&
+        targetEligibleIndex >= 0 &&
+        targetEligibleIndex < eligible.length) {
+      targetVisual = targetEligibleIndex;
+    } else {
+      targetVisual = _rng.nextInt(eligible.length);
+    }
+
+    await spinToTargetIndex(targetVisual);
   }
 
   // ── BUILD ─────────────────────────────────────────────────────────────────
@@ -353,10 +377,10 @@ class _EqubDrawWheelState extends State<EqubDrawWheel>
         _spinning
             ? const SizedBox(width: 28, height: 28,
                 child: CircularProgressIndicator(color: Colors.white, strokeWidth: 3))
-            : const Icon(Icons.autorenew_rounded, color: Colors.white, size: 34),
+            : Icon(widget.disabled ? Icons.verified_user_rounded : Icons.autorenew_rounded, color: Colors.white, size: 34),
         const SizedBox(height: 2),
         Text(
-          _spinning ? 'ሽክርክር' : 'እጣ አውጣ',
+          _spinning ? 'ሽክርክር' : (widget.disabled ? 'ዲጂታል እቁብ' : 'እጣ አውጣ'),
           style: const TextStyle(
             color: Colors.white, fontWeight: FontWeight.bold, fontSize: 11,
             shadows: [Shadow(color: Colors.black, blurRadius: 3)],
@@ -477,7 +501,52 @@ class _EqubDrawWheelState extends State<EqubDrawWheel>
   );
 
   Widget _buildSpinButton(List<Map<String, dynamic>> eligible) {
-    final canSpin = eligible.isNotEmpty && !widget.disabled && !_spinning;
+    if (widget.disabled) {
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 16),
+        decoration: BoxDecoration(
+          color: _spinning ? Colors.red.shade900 : const Color(0xFF003D1C),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: const Color(0xFFFFD700), width: 1.5),
+          boxShadow: [
+            BoxShadow(
+              color: (_spinning ? Colors.red : Colors.green).withOpacity(0.3),
+              blurRadius: 10,
+              offset: const Offset(0, 4),
+            )
+          ],
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            if (_spinning)
+              const SizedBox(
+                width: 20, height: 20,
+                child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2.5),
+              )
+            else
+              const Icon(Icons.lock_rounded, color: Color(0xFFFFD700), size: 20),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                _spinning
+                    ? '🔴 ቀጥታ ዕጣ በሥራ ላይ ነው — አስተዳዳሪው እጣ እያወጣ ነው…'
+                    : '🔒 ዕጣ የሚወጣው በአስተዳዳሪው ብቻ ነው (${eligible.length} ብቁ ተሳታፊዎች)',
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.white,
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    final canSpin = eligible.isNotEmpty && !_spinning;
     return SizedBox(
       width: double.infinity,
       child: ElevatedButton.icon(

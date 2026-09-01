@@ -4,6 +4,7 @@ import 'package:equb_app/main.dart';
 void main() {
   testWidgets('App smoke test', (WidgetTester tester) async {
     await tester.pumpWidget(const EqubApp(firebaseReady: false));
+    await tester.pump();
     expect(find.byType(EqubApp), findsOneWidget);
   });
 }
